@@ -22,12 +22,23 @@
     };
   }
 
+  interface SourceStats {
+    name: string;
+    slug: string;
+    wins: number;
+    losses: number;
+    ties: number;
+    total: number;
+    winRate: number;
+  }
+
   interface UserStats {
     totalVotes: number;
     sourcesCompared: Set<string>;
     favoriteSource: string | null;
     avgTimeToVote: number;
     votesThisWeek: number;
+    sourceStats: Record<string, SourceStats>;
   }
 
   let showAuthModal = false;
@@ -38,10 +49,13 @@
     favoriteSource: null,
     avgTimeToVote: 0,
     votesThisWeek: 0,
+    sourceStats: {},
   };
   let loading = true;
   let error: string | null = null;
   let hasLoadedOnce = false;
+  let showAllVotes = false;
+  let visibleVotesCount = 20;
 
   onMount(async () => {
     await authStore.init();
@@ -64,11 +78,11 @@
       favoriteSource: null,
       avgTimeToVote: 0,
       votesThisWeek: 0,
+      sourceStats: {},
     };
   }
 
   function handleAuthSuccess() {
-    // Reset flag so reactive statement can trigger
     hasLoadedOnce = false;
   }
 
@@ -81,7 +95,7 @@
     error = null;
 
     try {
-      // Get votes for the current user
+      // Get ALL votes for the current user (no limit)
       const { data, error: fetchError } = await supabase
         .from('votes')
         .select(`
@@ -100,8 +114,7 @@
           )
         `)
         .eq('user_id', $currentUser.id)
-        .order('created_at', { ascending: false })
-        .limit(100);
+        .order('created_at', { ascending: false });
 
       if (fetchError) throw fetchError;
 
@@ -116,7 +129,7 @@
   }
 
   function calculateStats() {
-    const sourceWins: Record<string, number> = {};
+    const sourceWins: Record<string, { name: string; slug: string; wins: number; losses: number; ties: number }> = {};
     let totalTime = 0;
     let timeCount = 0;
     const oneWeekAgo = new Date();
@@ -126,19 +139,31 @@
     stats.votesThisWeek = 0;
 
     for (const vote of votes) {
-      // Track sources
-      if (vote.match?.source_a?.slug) {
-        stats.sourcesCompared.add(vote.match.source_a.slug);
+      const sourceA = vote.match?.source_a;
+      const sourceB = vote.match?.source_b;
+      
+      // Initialize source tracking
+      if (sourceA?.slug && !sourceWins[sourceA.slug]) {
+        sourceWins[sourceA.slug] = { name: sourceA.name, slug: sourceA.slug, wins: 0, losses: 0, ties: 0 };
       }
-      if (vote.match?.source_b?.slug) {
-        stats.sourcesCompared.add(vote.match.source_b.slug);
+      if (sourceB?.slug && !sourceWins[sourceB.slug]) {
+        sourceWins[sourceB.slug] = { name: sourceB.name, slug: sourceB.slug, wins: 0, losses: 0, ties: 0 };
       }
 
-      // Track wins
-      if (vote.winner === 'a' && vote.match?.source_a?.name) {
-        sourceWins[vote.match.source_a.name] = (sourceWins[vote.match.source_a.name] || 0) + 1;
-      } else if (vote.winner === 'b' && vote.match?.source_b?.name) {
-        sourceWins[vote.match.source_b.name] = (sourceWins[vote.match.source_b.name] || 0) + 1;
+      // Track sources
+      if (sourceA?.slug) stats.sourcesCompared.add(sourceA.slug);
+      if (sourceB?.slug) stats.sourcesCompared.add(sourceB.slug);
+
+      // Track wins/losses
+      if (vote.winner === 'a' && sourceA?.slug) {
+        sourceWins[sourceA.slug].wins++;
+        if (sourceB?.slug) sourceWins[sourceB.slug].losses++;
+      } else if (vote.winner === 'b' && sourceB?.slug) {
+        sourceWins[sourceB.slug].wins++;
+        if (sourceA?.slug) sourceWins[sourceA.slug].losses++;
+      } else if (vote.winner === 'tie') {
+        if (sourceA?.slug) sourceWins[sourceA.slug].ties++;
+        if (sourceB?.slug) sourceWins[sourceB.slug].ties++;
       }
 
       // Track time
@@ -156,12 +181,23 @@
     stats.totalVotes = votes.length;
     stats.avgTimeToVote = timeCount > 0 ? Math.round(totalTime / timeCount / 1000) : 0;
     
-    // Find favorite source
+    // Calculate source stats with win rates
+    stats.sourceStats = {};
+    for (const [slug, data] of Object.entries(sourceWins)) {
+      const total = data.wins + data.losses + data.ties;
+      stats.sourceStats[slug] = {
+        ...data,
+        total,
+        winRate: total > 0 ? Math.round((data.wins / total) * 100) : 0,
+      };
+    }
+    
+    // Find favorite source (highest win count)
     let maxWins = 0;
-    for (const [source, wins] of Object.entries(sourceWins)) {
-      if (wins > maxWins) {
-        maxWins = wins;
-        stats.favoriteSource = source;
+    for (const [slug, data] of Object.entries(stats.sourceStats)) {
+      if (data.wins > maxWins) {
+        maxWins = data.wins;
+        stats.favoriteSource = data.name;
       }
     }
   }
@@ -175,6 +211,11 @@
       hour: '2-digit',
       minute: '2-digit',
     });
+  }
+
+  function formatShortDate(dateStr: string): string {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
   function getWinnerDisplay(vote: VoteRecord): string {
@@ -191,7 +232,6 @@
     return Math.round(vote.source_b_rating_after - vote.source_b_rating_before);
   }
 
-  // Helper to avoid TypeScript 'as' in template
   function getLogo(slug: string | undefined, fallback: string): string {
     return getSourceLogo((slug || fallback) as SourceSlug);
   }
@@ -199,6 +239,16 @@
   function getColor(slug: string | undefined, fallback: string): string {
     return getSourceColor((slug || fallback) as SourceSlug);
   }
+
+  function loadMoreVotes() {
+    visibleVotesCount += 20;
+  }
+
+  $: visibleVotes = showAllVotes ? votes : votes.slice(0, visibleVotesCount);
+  $: hasMoreVotes = !showAllVotes && votes.length > visibleVotesCount;
+  
+  // Sort source stats by win rate
+  $: sortedSourceStats = Object.values(stats.sourceStats).sort((a, b) => b.winRate - a.winRate);
 </script>
 
 <svelte:head>
@@ -207,10 +257,10 @@
 
 <AuthModal bind:open={showAuthModal} on:success={handleAuthSuccess} />
 
-<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
   <div class="text-center mb-8">
     <h1 class="text-2xl font-bold mb-2">Vote History</h1>
-    <p class="text-slate-400 text-sm">Track your comparisons and see your impact on the leaderboard</p>
+    <p class="text-slate-400 text-sm">Track your comparisons and see your source preferences</p>
   </div>
 
   {#if !$isAuthenticated}
@@ -278,17 +328,73 @@
       </div>
     </div>
 
-    {#if stats.favoriteSource}
+    <!-- Source Preferences -->
+    {#if sortedSourceStats.length > 0}
       <div class="arena-card mb-8">
-        <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-md bg-rose-500/10 flex items-center justify-center">
-            <svg class="w-4 h-4 text-rose-400" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"/>
-            </svg>
+        <h2 class="text-lg font-semibold mb-4">Your Source Preferences</h2>
+        <div class="space-y-4">
+          {#each sortedSourceStats as source, index}
+            <div class="flex items-center gap-4">
+              <!-- Rank indicator -->
+              <div class="flex-shrink-0 w-8 text-center">
+                <span class="text-sm font-bold {index === 0 ? 'text-amber-400' : 'text-slate-500'}">#{index + 1}</span>
+              </div>
+              
+              <!-- Source logo and name -->
+              <div class="flex items-center gap-2 w-40">
+                <img 
+                  src={getLogo(source.slug, 'wikipedia')} 
+                  alt={source.name}
+                  class="w-6 h-6 object-contain"
+                />
+                <span class="font-medium truncate {getColor(source.slug, 'wikipedia')}">{source.name}</span>
+              </div>
+              
+              <!-- Win rate bar -->
+              <div class="flex-1">
+                <div class="h-6 bg-slate-800 rounded-full overflow-hidden relative">
+                  <!-- Wins -->
+                  <div 
+                    class="h-full bg-emerald-500/80 absolute left-0 transition-all"
+                    style="width: {source.total > 0 ? (source.wins / source.total) * 100 : 0}%"
+                  ></div>
+                  <!-- Ties -->
+                  <div 
+                    class="h-full bg-slate-500/80 absolute transition-all"
+                    style="left: {source.total > 0 ? (source.wins / source.total) * 100 : 0}%; width: {source.total > 0 ? (source.ties / source.total) * 100 : 0}%"
+                  ></div>
+                  <!-- Text overlay -->
+                  <div class="absolute inset-0 flex items-center justify-center text-xs font-medium">
+                    <span class="text-emerald-300">{source.wins}W</span>
+                    <span class="mx-1 text-slate-400">·</span>
+                    <span class="text-red-300">{source.losses}L</span>
+                    <span class="mx-1 text-slate-400">·</span>
+                    <span class="text-slate-300">{source.ties}T</span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Win rate percentage -->
+              <div class="w-16 text-right">
+                <span class="text-lg font-bold {source.winRate >= 50 ? 'text-emerald-400' : 'text-slate-400'}">{source.winRate}%</span>
+              </div>
+            </div>
+          {/each}
+        </div>
+        
+        <!-- Legend -->
+        <div class="mt-4 pt-4 border-t border-slate-800/50 flex items-center justify-center gap-6 text-xs text-slate-500">
+          <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded bg-emerald-500/80"></div>
+            <span>Wins</span>
           </div>
-          <div>
-            <div class="text-xs text-slate-500">Your Favorite Source</div>
-            <div class="font-semibold">{stats.favoriteSource}</div>
+          <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded bg-slate-500/80"></div>
+            <span>Ties</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded bg-slate-800"></div>
+            <span>Losses</span>
           </div>
         </div>
       </div>
@@ -297,7 +403,10 @@
     <!-- Vote History List -->
     <div class="arena-card">
       <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-semibold">Recent Votes</h2>
+        <h2 class="text-lg font-semibold">
+          All Votes
+          <span class="text-sm font-normal text-slate-500">({votes.length} total)</span>
+        </h2>
         <button 
           class="text-sm text-slate-500 hover:text-slate-300 flex items-center gap-1"
           on:click={() => { hasLoadedOnce = false; loadVoteHistory(); }}
@@ -318,55 +427,64 @@
           </a>
         </div>
       {:else}
-        <div class="space-y-4">
-          {#each votes as vote}
-            <div class="p-4 rounded-xl bg-slate-800/50 border border-slate-700/50">
-              <div class="flex items-center justify-between mb-2">
-                <span class="font-medium">{vote.match?.topic_query || 'Unknown Topic'}</span>
-                <span class="text-xs text-slate-500">{formatDate(vote.created_at)}</span>
-              </div>
-              
-              <div class="flex items-center gap-4 text-sm">
-                <div class="flex items-center gap-2">
-                  <img 
-                    src={getLogo(vote.match?.source_a?.slug, 'wikipedia')} 
-                    alt=""
-                    class="w-5 h-5 object-contain"
-                  />
-                  <span class="{vote.winner === 'a' ? 'text-emerald-400 font-semibold' : 'text-slate-400'}">
-                    {vote.match?.source_a?.name || 'Source A'}
-                  </span>
-                  <span class="text-xs {getRatingChange(vote, 'a') >= 0 ? 'text-emerald-400' : 'text-red-400'}">
-                    ({getRatingChange(vote, 'a') >= 0 ? '+' : ''}{getRatingChange(vote, 'a')})
-                  </span>
+        <div class="space-y-2">
+          {#each visibleVotes as vote}
+            <div class="p-3 rounded-lg bg-slate-800/30 border border-slate-700/30 hover:bg-slate-800/50 transition-colors">
+              <div class="flex items-center justify-between">
+                <!-- Topic and result -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium text-sm truncate">{vote.match?.topic_query || 'Unknown Topic'}</span>
+                  </div>
+                  <div class="flex items-center gap-2 mt-1 text-xs">
+                    <img 
+                      src={getLogo(vote.match?.source_a?.slug, 'wikipedia')} 
+                      alt=""
+                      class="w-4 h-4 object-contain"
+                    />
+                    <span class="{vote.winner === 'a' ? 'text-emerald-400 font-semibold' : 'text-slate-500'}">
+                      {vote.match?.source_a?.name || 'A'}
+                    </span>
+                    <span class="text-slate-600">vs</span>
+                    <img 
+                      src={getLogo(vote.match?.source_b?.slug, 'grokipedia')} 
+                      alt=""
+                      class="w-4 h-4 object-contain"
+                    />
+                    <span class="{vote.winner === 'b' ? 'text-emerald-400 font-semibold' : 'text-slate-500'}">
+                      {vote.match?.source_b?.name || 'B'}
+                    </span>
+                    {#if vote.winner === 'tie'}
+                      <span class="px-1.5 py-0.5 bg-slate-700/50 rounded text-slate-300">Tie</span>
+                    {:else if vote.winner === 'both_bad'}
+                      <span class="px-1.5 py-0.5 bg-red-500/20 rounded text-red-400">Both Bad</span>
+                    {/if}
+                  </div>
                 </div>
                 
-                <span class="text-slate-600">vs</span>
-                
-                <div class="flex items-center gap-2">
-                  <img 
-                    src={getLogo(vote.match?.source_b?.slug, 'grokipedia')} 
-                    alt=""
-                    class="w-5 h-5 object-contain"
-                  />
-                  <span class="{vote.winner === 'b' ? 'text-emerald-400 font-semibold' : 'text-slate-400'}">
-                    {vote.match?.source_b?.name || 'Source B'}
-                  </span>
-                  <span class="text-xs {getRatingChange(vote, 'b') >= 0 ? 'text-emerald-400' : 'text-red-400'}">
-                    ({getRatingChange(vote, 'b') >= 0 ? '+' : ''}{getRatingChange(vote, 'b')})
-                  </span>
+                <!-- Date -->
+                <div class="text-right text-xs text-slate-500 flex-shrink-0 ml-4">
+                  <div>{formatShortDate(vote.created_at)}</div>
+                  {#if vote.time_to_vote_ms}
+                    <div class="text-slate-600">{Math.round(vote.time_to_vote_ms / 1000)}s</div>
+                  {/if}
                 </div>
-              </div>
-              
-              <div class="mt-2 text-xs text-slate-500">
-                Winner: <span class="text-slate-300">{getWinnerDisplay(vote)}</span>
-                {#if vote.time_to_vote_ms}
-                  • Decided in {Math.round(vote.time_to_vote_ms / 1000)}s
-                {/if}
               </div>
             </div>
           {/each}
         </div>
+        
+        <!-- Load More Button -->
+        {#if hasMoreVotes}
+          <div class="mt-4 text-center">
+            <button 
+              class="px-4 py-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg text-sm transition-colors"
+              on:click={loadMoreVotes}
+            >
+              Load More ({votes.length - visibleVotesCount} remaining)
+            </button>
+          </div>
+        {/if}
       {/if}
     </div>
   {/if}

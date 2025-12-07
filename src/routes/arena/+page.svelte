@@ -15,6 +15,14 @@
   } from '$lib/services/content';
   import { getRandomTopic, getRandomCuratedTopic } from '$lib/services/topics';
   import { calculateMatchOutcome, createRating } from '$lib/services/glicko2';
+  import { 
+    assessQuality, 
+    formatQualityScore, 
+    formatShapleyValue,
+    getQualityTier,
+    type QualityAssessment,
+    type SourceQuality
+  } from '$lib/services/shapley';
   import type { Source, VoteWinner } from '$lib/types/database';
 
   // Types
@@ -52,6 +60,15 @@
   let showAuthModal = false;
   let contentExpanded = { left: false, right: false };
   let isLoadingRandomTopic = false;
+  
+  // Quality assessment
+  let qualityAssessment: QualityAssessment | null = null;
+  let leftQuality: SourceQuality | null = null;
+  let rightQuality: SourceQuality | null = null;
+  
+  // Link toast
+  let showLinkToast = false;
+  let linkToastTimeout: ReturnType<typeof setTimeout>;
 
   // Content truncation settings
   const TRUNCATE_LENGTH = 2000;
@@ -255,6 +272,9 @@
 
       matchCount++;
       phase = 'revealing';
+      
+      // Calculate quality metrics now that voting is complete
+      calculateQualityMetrics();
 
       // Auto-transition to complete
       setTimeout(() => {
@@ -295,6 +315,54 @@
     leftDisplay = null;
     rightDisplay = null;
     voteResult = null;
+    qualityAssessment = null;
+    leftQuality = null;
+    rightQuality = null;
+  }
+
+  function handleLinkClick(e: CustomEvent<{ href: string }>) {
+    // Show toast message
+    clearTimeout(linkToastTimeout);
+    showLinkToast = true;
+    linkToastTimeout = setTimeout(() => {
+      showLinkToast = false;
+    }, 3000);
+  }
+
+  function calculateQualityMetrics() {
+    if (!leftDisplay || !rightDisplay) return;
+    
+    // Get global ratings for expected value calculation
+    const globalRatings: Record<string, { rating: number; winRate: number }> = {};
+    for (const source of sources) {
+      const winRate = source.total_matches > 0 
+        ? (source.total_wins / source.total_matches) * 100 
+        : 50;
+      globalRatings[source.slug] = {
+        rating: source.rating,
+        winRate,
+      };
+    }
+    
+    // Assess quality
+    qualityAssessment = assessQuality([
+      {
+        sourceId: leftDisplay.source.id,
+        sourceName: leftDisplay.source.name,
+        sourceSlug: leftDisplay.source.slug,
+        content: leftDisplay.content.content,
+      },
+      {
+        sourceId: rightDisplay.source.id,
+        sourceName: rightDisplay.source.name,
+        sourceSlug: rightDisplay.source.slug,
+        content: rightDisplay.content.content,
+      },
+    ], globalRatings);
+    
+    // Assign to left/right
+    leftQuality = qualityAssessment.sources.find(s => s.sourceId === leftDisplay!.source.id) || null;
+    rightQuality = qualityAssessment.sources.find(s => s.sourceId === rightDisplay!.source.id) || null;
   }
 </script>
 
@@ -471,7 +539,9 @@
           
           <div class="flex-1 overflow-y-auto max-h-[60vh] scrollbar-thin">
             <Markdown 
-              content={getDisplayContent(leftDisplay.content.content, contentExpanded.left)} 
+              content={getDisplayContent(leftDisplay.content.content, contentExpanded.left)}
+              disableLinks={true}
+              on:linkclick={handleLinkClick}
             />
           </div>
           
@@ -498,7 +568,9 @@
           
           <div class="flex-1 overflow-y-auto max-h-[60vh] scrollbar-thin">
             <Markdown 
-              content={getDisplayContent(rightDisplay.content.content, contentExpanded.right)} 
+              content={getDisplayContent(rightDisplay.content.content, contentExpanded.right)}
+              disableLinks={true}
+              on:linkclick={handleLinkClick}
             />
           </div>
           
@@ -593,6 +665,48 @@
           {#if voteResult.winner === 'a'}
             <div class="mt-3 text-sm text-green-400 font-medium">✓ Your pick</div>
           {/if}
+          
+          <!-- Quality Metrics -->
+          {#if leftQuality}
+            <div class="mt-4 pt-4 border-t border-slate-700/50">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs text-slate-500">Quality Score</span>
+                <span class="text-sm font-semibold {getQualityTier(leftQuality.overallScore).color}">
+                  {formatQualityScore(leftQuality.overallScore)}
+                </span>
+              </div>
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Accuracy</span>
+                  <span class="text-slate-300">{formatQualityScore(leftQuality.metrics.accuracy)}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Readability</span>
+                  <span class="text-slate-300">{formatQualityScore(leftQuality.metrics.readability)}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Depth</span>
+                  <span class="text-slate-300">{formatQualityScore(leftQuality.metrics.depth)}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Objectivity</span>
+                  <span class="text-slate-300">{formatQualityScore(leftQuality.metrics.objectivity)}</span>
+                </div>
+              </div>
+              <div class="mt-2 pt-2 border-t border-slate-800/50 flex justify-between text-xs">
+                <div>
+                  <span class="text-slate-500">Shapley Value</span>
+                  <span class="ml-1 font-semibold {leftQuality.shapleyValue >= 0 ? 'text-emerald-400' : 'text-red-400'}">
+                    {formatShapleyValue(leftQuality.shapleyValue)}
+                  </span>
+                </div>
+                <div>
+                  <span class="text-slate-500">Expected</span>
+                  <span class="ml-1 font-semibold text-amber-400">{formatQualityScore(leftQuality.expectedValue)}</span>
+                </div>
+              </div>
+            </div>
+          {/if}
         </div>
 
         <!-- Right Reveal -->
@@ -622,8 +736,61 @@
           {#if voteResult.winner === 'b'}
             <div class="mt-3 text-sm text-green-400 font-medium">✓ Your pick</div>
           {/if}
+          
+          <!-- Quality Metrics -->
+          {#if rightQuality}
+            <div class="mt-4 pt-4 border-t border-slate-700/50">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs text-slate-500">Quality Score</span>
+                <span class="text-sm font-semibold {getQualityTier(rightQuality.overallScore).color}">
+                  {formatQualityScore(rightQuality.overallScore)}
+                </span>
+              </div>
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Accuracy</span>
+                  <span class="text-slate-300">{formatQualityScore(rightQuality.metrics.accuracy)}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Readability</span>
+                  <span class="text-slate-300">{formatQualityScore(rightQuality.metrics.readability)}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Depth</span>
+                  <span class="text-slate-300">{formatQualityScore(rightQuality.metrics.depth)}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-slate-500">Objectivity</span>
+                  <span class="text-slate-300">{formatQualityScore(rightQuality.metrics.objectivity)}</span>
+                </div>
+              </div>
+              <div class="mt-2 pt-2 border-t border-slate-800/50 flex justify-between text-xs">
+                <div>
+                  <span class="text-slate-500">Shapley Value</span>
+                  <span class="ml-1 font-semibold {rightQuality.shapleyValue >= 0 ? 'text-emerald-400' : 'text-red-400'}">
+                    {formatShapleyValue(rightQuality.shapleyValue)}
+                  </span>
+                </div>
+                <div>
+                  <span class="text-slate-500">Expected</span>
+                  <span class="ml-1 font-semibold text-amber-400">{formatQualityScore(rightQuality.expectedValue)}</span>
+                </div>
+              </div>
+            </div>
+          {/if}
         </div>
       </div>
+
+      <!-- Coalition Value -->
+      {#if qualityAssessment}
+        <div class="max-w-md mx-auto">
+          <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 text-center">
+            <div class="text-xs text-slate-500 mb-1">Combined Knowledge Quality</div>
+            <div class="text-2xl font-bold text-gradient">{formatQualityScore(qualityAssessment.coalitionValue)}</div>
+            <div class="text-xs text-slate-500 mt-1">When sources are blended together</div>
+          </div>
+        </div>
+      {/if}
 
       <!-- Vote Summary -->
       <div class="text-center">
@@ -663,6 +830,23 @@
         </div>
       </div>
 
+      <!-- Expandable Content with ENABLED links -->
+      <details class="arena-card">
+        <summary class="cursor-pointer text-sm font-medium text-slate-400 hover:text-slate-200">
+          View Full Articles (links now work)
+        </summary>
+        <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="p-4 rounded-lg bg-slate-800/30 max-h-[50vh] overflow-y-auto">
+            <div class="text-xs text-slate-500 mb-2">{voteResult.leftSource.name}</div>
+            <Markdown content={leftDisplay.content.content} disableLinks={false} />
+          </div>
+          <div class="p-4 rounded-lg bg-slate-800/30 max-h-[50vh] overflow-y-auto">
+            <div class="text-xs text-slate-500 mb-2">{voteResult.rightSource.name}</div>
+            <Markdown content={rightDisplay.content.content} disableLinks={false} />
+          </div>
+        </div>
+      </details>
+
       <div class="text-center text-sm text-slate-500">
         Comparisons this session: {matchCount}
       </div>
@@ -687,3 +871,39 @@
     </div>
   {/if}
 </div>
+
+<!-- Link Disabled Toast -->
+{#if showLinkToast}
+  <div 
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-fade-in-up"
+  >
+    <div class="px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl shadow-lg flex items-center gap-3">
+      <div class="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+        <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+        </svg>
+      </div>
+      <div>
+        <div class="text-sm font-medium text-white">Links disabled during comparison</div>
+        <div class="text-xs text-slate-400">Vote first to reveal sources and enable links</div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<style>
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 10px);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+  }
+  
+  .animate-fade-in-up {
+    animation: fade-in-up 0.3s ease-out;
+  }
+</style>

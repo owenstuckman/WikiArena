@@ -14,6 +14,17 @@
  * npx supabase gen types typescript --local > src/lib/types/database.ts
  */
 
+// Rating categories for comparison
+export type RatingCategory = 'overall' | 'accuracy' | 'readability' | 'comprehensiveness' | 'objectivity';
+
+export const RATING_CATEGORIES: { value: RatingCategory; label: string; description: string }[] = [
+  { value: 'overall', label: 'Overall', description: 'General quality and usefulness' },
+  { value: 'accuracy', label: 'Accuracy', description: 'Factual correctness and reliability' },
+  { value: 'readability', label: 'Readability', description: 'Clarity and ease of understanding' },
+  { value: 'comprehensiveness', label: 'Depth', description: 'Coverage and detail of information' },
+  { value: 'objectivity', label: 'Objectivity', description: 'Neutrality and balanced perspective' },
+];
+
 export type Json =
   | string
   | number
@@ -362,6 +373,13 @@ export interface LeaderboardEntry {
   total_losses: number;
   total_ties: number;
   win_rate: number;
+  // Category-specific ratings (optional, for category leaderboards)
+  category_ratings?: {
+    accuracy?: { rating: number; matches: number };
+    readability?: { rating: number; matches: number };
+    comprehensiveness?: { rating: number; matches: number };
+    objectivity?: { rating: number; matches: number };
+  };
 }
 
 // Arena-specific types

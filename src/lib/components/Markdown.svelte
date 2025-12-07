@@ -1,17 +1,40 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, createEventDispatcher } from 'svelte';
   import { marked } from 'marked';
   
   export let content: string = '';
   export let class_: string = '';
+  export let disableLinks: boolean = false; // New prop to disable link clicking
+  
+  const dispatch = createEventDispatcher();
   
   let renderedHtml = '';
+  let container: HTMLDivElement;
   
   // Configure marked options
   marked.setOptions({
     breaks: true, // Convert \n to <br>
     gfm: true, // GitHub Flavored Markdown (includes tables)
   });
+  
+  // Custom renderer to open links in new tabs
+  const renderer = new marked.Renderer();
+  
+  // Override link rendering
+  const originalLink = renderer.link.bind(renderer);
+  renderer.link = function(href: string | null, title: string | null | undefined, text: string) {
+    if (!href) return text;
+    
+    const titleAttr = title ? ` title="${title}"` : '';
+    // External links open in new tab with indicator
+    if (href.startsWith('http://') || href.startsWith('https://')) {
+      // Add data attribute to identify as external link
+      return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer" class="external-link" data-href="${href}">${text}<svg class="external-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg></a>`;
+    }
+    return `<a href="${href}"${titleAttr} data-href="${href}">${text}</a>`;
+  };
+  
+  marked.use({ renderer });
   
   $: {
     try {
@@ -21,9 +44,51 @@
       renderedHtml = content.replace(/\n/g, '<br>');
     }
   }
+  
+  // Handle link clicks when disabled
+  function handleClick(e: MouseEvent) {
+    if (!disableLinks) return;
+    
+    const target = e.target as HTMLElement;
+    const link = target.closest('a');
+    
+    if (link) {
+      e.preventDefault();
+      e.stopPropagation();
+      dispatch('linkclick', { href: link.getAttribute('data-href') || link.getAttribute('href') });
+    }
+  }
+  
+  onMount(() => {
+    if (container && disableLinks) {
+      // Add disabled class to all links
+      const links = container.querySelectorAll('a');
+      links.forEach(link => {
+        link.classList.add('link-disabled');
+      });
+    }
+  });
+  
+  // Reactively update link states
+  $: if (container) {
+    const links = container.querySelectorAll('a');
+    links.forEach(link => {
+      if (disableLinks) {
+        link.classList.add('link-disabled');
+      } else {
+        link.classList.remove('link-disabled');
+      }
+    });
+  }
 </script>
 
-<div class="markdown-content {class_}">
+<div 
+  class="markdown-content {class_}" 
+  class:links-disabled={disableLinks}
+  bind:this={container}
+  on:click={handleClick}
+  role="presentation"
+>
   {@html renderedHtml}
 </div>
 
@@ -133,16 +198,50 @@
     margin: 1.5rem 0;
   }
   
+  /* Link styles */
   .markdown-content :global(a) {
     color: #fbbf24;
     text-decoration: underline;
     text-underline-offset: 2px;
+    transition: color 0.15s ease;
   }
   
   .markdown-content :global(a:hover) {
     color: #fcd34d;
   }
   
+  /* Disabled link styles */
+  .markdown-content.links-disabled :global(a),
+  .markdown-content :global(a.link-disabled) {
+    cursor: not-allowed;
+    opacity: 0.7;
+    pointer-events: auto; /* Keep clickable for event handling */
+  }
+  
+  .markdown-content.links-disabled :global(a:hover),
+  .markdown-content :global(a.link-disabled:hover) {
+    color: #fbbf24;
+    text-decoration: underline dotted;
+  }
+  
+  /* External link indicator */
+  .markdown-content :global(.external-link) {
+    display: inline;
+  }
+  
+  .markdown-content :global(.external-icon) {
+    display: inline-block;
+    width: 0.75em;
+    height: 0.75em;
+    margin-left: 0.2em;
+    vertical-align: baseline;
+    opacity: 0.7;
+  }
+  
+  .markdown-content :global(a:hover .external-icon) {
+    opacity: 1;
+  }
+
   /* Enhanced Table Styles */
   .markdown-content :global(.table-wrapper) {
     overflow-x: auto;

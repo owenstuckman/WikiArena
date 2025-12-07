@@ -59,15 +59,17 @@ export async function fetchWikipediaFullArticle(title: string): Promise<Wikipedi
   try {
     const encoded = encodeURIComponent(title);
     
-    // Use Parse API to get full article HTML
+    // Use Parse API to get full article HTML with more properties
     const params = new URLSearchParams({
       action: 'parse',
       page: title,
-      prop: 'text|sections',
+      prop: 'text|sections|categories|displaytitle',
       format: 'json',
       origin: '*',
       disableeditsection: 'true',
       disabletoc: 'true',
+      disablelimitreport: 'true',
+      wrapoutputclass: '',
     });
     
     const response = await fetch(`${WIKIPEDIA_ACTION_API}?${params}`);
@@ -85,15 +87,30 @@ export async function fetchWikipediaFullArticle(title: string): Promise<Wikipedi
     }
     
     const html = data.parse?.text?.['*'];
-    const pageTitle = data.parse?.title || title;
+    const pageTitle = data.parse?.displaytitle?.replace(/<[^>]+>/g, '') || data.parse?.title || title;
+    const categories = data.parse?.categories || [];
     
     if (!html) {
       return fetchWikipediaWithExtracts(title);
     }
     
+    // Check if this is a stub article
+    const isStub = categories.some((cat: any) => 
+      cat['*']?.toLowerCase().includes('stub') || 
+      cat['*']?.toLowerCase().includes('stubs')
+    );
+    
     // Convert HTML to clean markdown-like text
-    const content = convertWikipediaHtmlToMarkdown(pageTitle, html);
-    const sanitizedContent = sanitizeContent(content, 'wikipedia');
+    let content = convertWikipediaHtmlToMarkdown(pageTitle, html);
+    let sanitizedContent = sanitizeContent(content, 'wikipedia');
+    
+    // If content is too short (stub), try to get more with TextExtracts
+    if (sanitizedContent.length < 500 || isStub) {
+      const extractArticle = await fetchWikipediaWithExtracts(title);
+      if (extractArticle?.fullContent && extractArticle.fullContent.length > sanitizedContent.length) {
+        sanitizedContent = extractArticle.fullContent;
+      }
+    }
     
     return {
       title: pageTitle,
@@ -174,40 +191,75 @@ function convertWikipediaHtmlToMarkdown(title: string, html: string): string {
   content = content.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
   content = content.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
   
-  // Remove reference tags and citations
-  content = content.replace(/<sup[^>]*class="reference"[^>]*>[\s\S]*?<\/sup>/gi, '');
+  // Remove reference tags and inline citations (superscript numbers)
+  content = content.replace(/<sup[^>]*class="[^"]*reference[^"]*"[^>]*>[\s\S]*?<\/sup>/gi, '');
+  content = content.replace(/<sup[^>]*>[\s\S]*?<\/sup>/gi, ''); // Remove all superscripts
   content = content.replace(/\[\d+\]/g, '');
   content = content.replace(/\[citation needed\]/gi, '');
   content = content.replace(/\[clarification needed\]/gi, '');
+  content = content.replace(/\[when\?\]/gi, '');
+  content = content.replace(/\[who\?\]/gi, '');
+  content = content.replace(/\[where\?\]/gi, '');
+  content = content.replace(/\[why\?\]/gi, '');
+  content = content.replace(/\[note \d+\]/gi, '');
   
   // Remove edit links
-  content = content.replace(/<span class="mw-editsection"[\s\S]*?<\/span>/gi, '');
+  content = content.replace(/<span[^>]*class="[^"]*mw-editsection[^"]*"[^>]*>[\s\S]*?<\/span>/gi, '');
   
-  // Remove navigation boxes, infoboxes, and sidebars (but NOT data tables)
+  // Remove navigation boxes, infoboxes, sidebars, and metadata (but NOT data tables)
   content = content.replace(/<table[^>]*class="[^"]*infobox[^"]*"[^>]*>[\s\S]*?<\/table>/gi, '');
   content = content.replace(/<table[^>]*class="[^"]*navbox[^"]*"[^>]*>[\s\S]*?<\/table>/gi, '');
   content = content.replace(/<table[^>]*class="[^"]*sidebar[^"]*"[^>]*>[\s\S]*?<\/table>/gi, '');
   content = content.replace(/<table[^>]*class="[^"]*ambox[^"]*"[^>]*>[\s\S]*?<\/table>/gi, '');
   content = content.replace(/<table[^>]*class="[^"]*metadata[^"]*"[^>]*>[\s\S]*?<\/table>/gi, '');
+  content = content.replace(/<table[^>]*class="[^"]*mbox[^"]*"[^>]*>[\s\S]*?<\/table>/gi, '');
+  content = content.replace(/<table[^>]*class="[^"]*vertical-navbox[^"]*"[^>]*>[\s\S]*?<\/table>/gi, '');
+  content = content.replace(/<table[^>]*class="[^"]*plainlinks[^"]*"[^>]*>[\s\S]*?<\/table>/gi, '');
   content = content.replace(/<div[^>]*class="[^"]*navbox[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
   content = content.replace(/<div[^>]*class="[^"]*thumb[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+  content = content.replace(/<div[^>]*class="[^"]*hatnote[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+  content = content.replace(/<div[^>]*class="[^"]*shortdescription[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+  content = content.replace(/<div[^>]*class="[^"]*mw-heading[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+  
+  // Remove stub notices and categories - more aggressive
+  content = content.replace(/<div[^>]*class="[^"]*stub[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+  content = content.replace(/<table[^>]*class="[^"]*stub[^"]*"[^>]*>[\s\S]*?<\/table>/gi, '');
+  content = content.replace(/<div[^>]*class="[^"]*catlinks[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+  content = content.replace(/<div[^>]*id="catlinks"[^>]*>[\s\S]*?<\/div>/gi, '');
+  content = content.replace(/<div[^>]*class="[^"]*asbox[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+  
+  // Remove coordinates spans
+  content = content.replace(/<span[^>]*class="[^"]*geo[^"]*"[^>]*>[\s\S]*?<\/span>/gi, '');
+  content = content.replace(/<span[^>]*class="[^"]*coordinates[^"]*"[^>]*>[\s\S]*?<\/span>/gi, '');
+  content = content.replace(/<span[^>]*id="coordinates"[^>]*>[\s\S]*?<\/span>/gi, '');
   
   // Remove figure and image elements
   content = content.replace(/<figure[^>]*>[\s\S]*?<\/figure>/gi, '');
   content = content.replace(/<img[^>]*>/gi, '');
   
-  // Remove "See also", "References", "External links", "Further reading" sections
-  content = content.replace(/<h2[^>]*><span[^>]*id="See_also"[\s\S]*$/gi, '');
-  content = content.replace(/<h2[^>]*><span[^>]*id="References"[\s\S]*$/gi, '');
-  content = content.replace(/<h2[^>]*><span[^>]*id="External_links"[\s\S]*$/gi, '');
-  content = content.replace(/<h2[^>]*><span[^>]*id="Further_reading"[\s\S]*$/gi, '');
-  content = content.replace(/<h2[^>]*><span[^>]*id="Notes"[\s\S]*$/gi, '');
-  content = content.replace(/<h2[^>]*><span[^>]*id="Bibliography"[\s\S]*$/gi, '');
+  // Remove reference list sections entirely - be very aggressive
+  content = content.replace(/<div[^>]*class="[^"]*reflist[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+  content = content.replace(/<div[^>]*class="[^"]*refbegin[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+  content = content.replace(/<ol[^>]*class="[^"]*references[^"]*"[^>]*>[\s\S]*?<\/ol>/gi, '');
+  content = content.replace(/<ul[^>]*class="[^"]*references[^"]*"[^>]*>[\s\S]*?<\/ul>/gi, '');
+  
+  // Remove sections: See also, References, External links, Notes, Bibliography, Further reading
+  // Match from the heading to the next h2 or end of content
+  const sectionsToRemove = ['See_also', 'References', 'External_links', 'Notes', 'Bibliography', 'Further_reading', 'Sources'];
+  for (const section of sectionsToRemove) {
+    // Remove section with span id
+    content = content.replace(new RegExp(`<h2[^>]*>\\s*<span[^>]*id="${section}"[^>]*>[\\s\\S]*?</span>[\\s\\S]*?</h2>[\\s\\S]*?(?=<h2|$)`, 'gi'), '');
+    // Remove section with mw-headline
+    content = content.replace(new RegExp(`<h2[^>]*>[\\s\\S]*?${section.replace(/_/g, '[_ ]')}[\\s\\S]*?</h2>[\\s\\S]*?(?=<h2|$)`, 'gi'), '');
+  }
   
   // Convert tables to markdown BEFORE other conversions
   content = convertHtmlTablesToMarkdown(content);
   
-  // Convert headings
+  // Convert headings - handle both span-wrapped and plain text
+  content = content.replace(/<h2[^>]*>[\s\S]*?<span[^>]*class="[^"]*mw-headline[^"]*"[^>]*>([^<]*)<\/span>[\s\S]*?<\/h2>/gi, '\n\n## $1\n\n');
+  content = content.replace(/<h3[^>]*>[\s\S]*?<span[^>]*class="[^"]*mw-headline[^"]*"[^>]*>([^<]*)<\/span>[\s\S]*?<\/h3>/gi, '\n\n### $1\n\n');
+  content = content.replace(/<h4[^>]*>[\s\S]*?<span[^>]*class="[^"]*mw-headline[^"]*"[^>]*>([^<]*)<\/span>[\s\S]*?<\/h4>/gi, '\n\n#### $1\n\n');
   content = content.replace(/<h2[^>]*><span[^>]*>([^<]*)<\/span><\/h2>/gi, '\n\n## $1\n\n');
   content = content.replace(/<h3[^>]*><span[^>]*>([^<]*)<\/span><\/h3>/gi, '\n\n### $1\n\n');
   content = content.replace(/<h4[^>]*><span[^>]*>([^<]*)<\/span><\/h4>/gi, '\n\n#### $1\n\n');
@@ -215,35 +267,103 @@ function convertWikipediaHtmlToMarkdown(title: string, html: string): string {
   content = content.replace(/<h3[^>]*>([^<]*)<\/h3>/gi, '\n\n### $1\n\n');
   content = content.replace(/<h4[^>]*>([^<]*)<\/h4>/gi, '\n\n#### $1\n\n');
   
-  // Convert lists
-  content = content.replace(/<li[^>]*>/gi, '- ');
-  content = content.replace(/<\/li>/gi, '\n');
+  // Convert lists - handle list items better
+  content = content.replace(/<li[^>]*>/gi, '\n- ');
+  content = content.replace(/<\/li>/gi, '');
   content = content.replace(/<\/?[ou]l[^>]*>/gi, '\n');
+  
+  // Convert definition lists
+  content = content.replace(/<dt[^>]*>/gi, '\n**');
+  content = content.replace(/<\/dt>/gi, '**');
+  content = content.replace(/<dd[^>]*>/gi, '\n  ');
+  content = content.replace(/<\/dd>/gi, '');
+  content = content.replace(/<\/?dl[^>]*>/gi, '\n');
   
   // Convert paragraphs
   content = content.replace(/<p[^>]*>/gi, '\n\n');
   content = content.replace(/<\/p>/gi, '');
   
-  // Convert bold and italic
-  content = content.replace(/<b[^>]*>([^<]*)<\/b>/gi, '**$1**');
-  content = content.replace(/<strong[^>]*>([^<]*)<\/strong>/gi, '**$1**');
-  content = content.replace(/<i[^>]*>([^<]*)<\/i>/gi, '*$1*');
-  content = content.replace(/<em[^>]*>([^<]*)<\/em>/gi, '*$1*');
+  // Convert bold and italic - handle nested tags
+  content = content.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, '**$1**');
+  content = content.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '**$1**');
+  content = content.replace(/<i[^>]*>([\s\S]*?)<\/i>/gi, '*$1*');
+  content = content.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '*$1*');
   
-  // Convert links - just keep the text
-  content = content.replace(/<a[^>]*>([^<]*)<\/a>/gi, '$1');
+  // Convert Wikipedia internal links to markdown links
+  content = content.replace(/<a[^>]*href="\/wiki\/([^"#]+)"[^>]*title="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (match, wikiPath, linkTitle, linkText) => {
+    const cleanText = linkText.replace(/<[^>]+>/g, '').trim();
+    if (!cleanText) return '';
+    return `[${cleanText}](https://en.wikipedia.org/wiki/${wikiPath})`;
+  });
+  
+  // Convert Wikipedia internal links without title
+  content = content.replace(/<a[^>]*href="\/wiki\/([^"#]+)"[^>]*>([\s\S]*?)<\/a>/gi, (match, wikiPath, linkText) => {
+    const cleanText = linkText.replace(/<[^>]+>/g, '').trim();
+    if (!cleanText) return '';
+    return `[${cleanText}](https://en.wikipedia.org/wiki/${wikiPath})`;
+  });
+  
+  // Convert external links to markdown links
+  content = content.replace(/<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (match, url, linkText) => {
+    const cleanText = linkText.replace(/<[^>]+>/g, '').trim();
+    if (!cleanText) return '';
+    return `[${cleanText}](${url})`;
+  });
+  
+  // Remove remaining links without proper href (anchors, etc)
+  content = content.replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, '$1');
   
   // Remove remaining HTML tags (but preserve markdown table structure)
-  content = content.replace(/<(?![\|])[^>]+>/g, '');
+  content = content.replace(/<[^>]+>/g, '');
   
   // Decode HTML entities
   content = decodeHtmlEntities(content);
+  
+  // === POST-PROCESSING CLEANUP ===
+  
+  // Remove reference formatting artifacts (^ prefix)
+  content = content.replace(/^\s*\^\s*/gm, '');
+  content = content.replace(/\s+\^\s+/g, ' ');
+  
+  // Remove trailing dashes and standalone dashes
+  content = content.replace(/\s*-\s*-\s*$/gm, '');
+  content = content.replace(/^\s*-\s*-\s*$/gm, '');
+  
+  // Clean up stub notices text
+  content = content.replace(/This[^.]*article is a stub[^.]*\./gi, '');
+  content = content.replace(/about[^.]*is a stub[^.]*\./gi, '');
+  content = content.replace(/You can help[^.]*expanding it[^.]*\.?/gi, '');
+  content = content.replace(/\bv\s+t\s+e\b/gi, ''); // Remove v/t/e links
+  
+  // Clean up coordinates - multiple formats
+  content = content.replace(/\d+°\d+['′]?\d*["″]?[NS]\s*\d+°\d+['′]?\d*["″]?[EW]/g, '');
+  content = content.replace(/\/\s*\d+\.\d+°?[NS]?\s*\d+\.\d+°?[EW]?/g, '');
+  content = content.replace(/\d+\.\d+;\s*[-\d.]+/g, '');
+  content = content.replace(/﻿/g, ''); // Remove special unicode spaces
+  
+  // Remove "See also" and "References" section headers and their content if they slipped through
+  content = content.replace(/## See also[\s\S]*?(?=##|$)/gi, '');
+  content = content.replace(/## References[\s\S]*?(?=##|$)/gi, '');
+  content = content.replace(/## External links[\s\S]*?(?=##|$)/gi, '');
+  content = content.replace(/## Notes[\s\S]*?(?=##|$)/gi, '');
+  content = content.replace(/## Bibliography[\s\S]*?(?=##|$)/gi, '');
+  content = content.replace(/## Further reading[\s\S]*?(?=##|$)/gi, '');
+  
+  // Clean up empty list items and orphaned bullets
+  content = content.replace(/^-\s*$/gm, '');
+  content = content.replace(/\n-\s*\n/g, '\n');
+  content = content.replace(/^-\s+$/gm, '');
   
   // Clean up whitespace
   content = content.replace(/\n{4,}/g, '\n\n\n');
   content = content.replace(/[ \t]+/g, ' ');
   content = content.replace(/\n /g, '\n');
   content = content.replace(/ \n/g, '\n');
+  content = content.replace(/\n{3,}/g, '\n\n');
+  
+  // Clean up empty sections
+  content = content.replace(/##\s+\n+##/g, '##');
+  content = content.replace(/##\s*$/gm, '');
   
   // Add title
   content = `# ${title}\n\n${content.trim()}`;
@@ -736,6 +856,29 @@ function sanitizeContent(content: string, source: SourceSlug): string {
     sanitized = sanitized.replace(pattern, '');
   }
   
+  // Clean up reference formatting artifacts
+  sanitized = sanitized.replace(/\^\s*[""]?/g, ''); // Remove ^ from references
+  sanitized = sanitized.replace(/[""]?\s*-\s*-\s*$/gm, ''); // Remove trailing dashes
+  sanitized = sanitized.replace(/^-\s*-\s*$/gm, ''); // Remove standalone dashes
+  
+  // Clean up stub notices
+  sanitized = sanitized.replace(/This .* article is a stub\..*/gi, '');
+  sanitized = sanitized.replace(/about .* is a stub\..*/gi, '');
+  sanitized = sanitized.replace(/You can help.*?expanding it\.?/gi, '');
+  sanitized = sanitized.replace(/\bv\s+t\s+e\b/g, ''); // v/t/e navigation
+  
+  // Clean up coordinates - multiple formats
+  sanitized = sanitized.replace(/\d+°\d+['′]?\d*["″]?[NS]\s*\d+°\d+['′]?\d*["″]?[EW]/g, '');
+  sanitized = sanitized.replace(/\/\s*\d+\.\d+;\s*[-\d.]+/g, '');
+  sanitized = sanitized.replace(/\/\s*\d+\.\d+°?[NS]?\s*[-\d.]+°?[EW]?/g, '');
+  sanitized = sanitized.replace(/﻿/g, ''); // Remove special unicode spaces
+  
+  // Remove sections that slipped through
+  sanitized = sanitized.replace(/## References[\s\S]*?(?=##|$)/gi, '');
+  sanitized = sanitized.replace(/## See also[\s\S]*?(?=##|$)/gi, '');
+  sanitized = sanitized.replace(/## External links[\s\S]*?(?=##|$)/gi, '');
+  sanitized = sanitized.replace(/## Notes[\s\S]*?(?=##|$)/gi, '');
+  
   // Clean up resulting artifacts
   sanitized = sanitized.replace(/\s{3,}/g, '\n\n'); // Multiple spaces/newlines
   sanitized = sanitized.replace(/^\s*[-•]\s*$/gm, ''); // Empty list items
@@ -744,6 +887,10 @@ function sanitizeContent(content: string, source: SourceSlug): string {
   sanitized = sanitized.replace(/\.\s*\./g, '.'); // Double periods
   sanitized = sanitized.replace(/\s+\./g, '.'); // Space before period
   sanitized = sanitized.replace(/\s+,/g, ','); // Space before comma
+  
+  // Clean up empty sections
+  sanitized = sanitized.replace(/##\s+\n+##/g, '##');
+  sanitized = sanitized.replace(/##\s+$/gm, '');
   
   return sanitized.trim();
 }
@@ -833,14 +980,27 @@ export async function fetchContentFromAllSources(
 
 /**
  * Source logo URLs - using reliable CDN/wiki sources
+ * 
+ * TO USE CUSTOM LOGOS:
+ * 1. Add your logo images to the /static folder:
+ *    - /static/logos/grokipedia.png (or .svg)
+ *    - /static/logos/britannica.png (or .svg)
+ *    - /static/logos/wikipedia.png (or .svg)
+ * 
+ * 2. Update the URLs below to use local paths:
+ *    - grokipedia: '/logos/grokipedia.png'
+ *    - britannica: '/logos/britannica.png'
+ *    - wikipedia: '/logos/wikipedia.png'
+ * 
+ * Note: Files in /static are served at the root URL path
  */
 export const SOURCE_LOGOS: Record<SourceSlug, string> = {
   // Wikipedia puzzle globe logo
   wikipedia: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Wikipedia-logo-v2-en.svg/200px-Wikipedia-logo-v2-en.svg.png',
-  // xAI logo (stylized X)
-  grokipedia: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/32/X.ai_logo.png/220px-X.ai_logo.png',
-  // Britannica thistle logo
-  britannica: 'https://upload.wikimedia.org/wikipedia/en/thumb/5/50/Encyclop%C3%A6dia_Britannica_thistle.svg/100px-Encyclop%C3%A6dia_Britannica_thistle.svg.png',
+  // xAI/Grok logo - TO CUSTOMIZE: add /static/logos/grokipedia.png and change to '/logos/grokipedia.png'
+  grokipedia: '/logos/grokipedia.png',
+  // Britannica thistle logo - TO CUSTOMIZE: add /static/logos/britannica.png and change to '/logos/britannica.png'
+  britannica: '/logos/britannica.webp',
 };
 
 /**

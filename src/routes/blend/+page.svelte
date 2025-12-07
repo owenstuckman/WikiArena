@@ -80,6 +80,10 @@
   // Quality assessment
   let qualityAssessment: QualityAssessment | null = null;
   let sourceQualities: Record<string, SourceQuality> = {};
+  
+  // Track failed sources and effective weights (normalized to successful sources only)
+  let failedSources: Set<string> = new Set();
+  let effectiveWeights: Record<string, number> = {};
 
   // Helpers
   function getLogo(slug: string): string {
@@ -485,24 +489,77 @@
     error = '';
     result = '';
     fetchedContents = {};
+    failedSources = new Set();
+    effectiveWeights = {};
 
     try {
       // Phase 1: Fetch content from all enabled sources
       loadingPhase = 'Fetching content from sources...';
       
       const contentPromises = enabledSourceList.map(async (source) => {
-        const content = await fetchContentFromSource(query, source.slug as SourceSlug);
-        if (content) {
-          fetchedContents[source.id] = content;
+        try {
+          const content = await fetchContentFromSource(query, source.slug as SourceSlug);
+          if (content && content.content && content.content.trim().length > 50) {
+            fetchedContents[source.id] = content;
+          } else {
+            failedSources.add(source.id);
+          }
+        } catch (e) {
+          console.error(`Failed to fetch from ${source.name}:`, e);
+          failedSources.add(source.id);
         }
         fetchedContents = { ...fetchedContents };
-        return { source, content };
+        failedSources = new Set(failedSources);
+        return { source };
       });
 
-      const results = await Promise.all(contentPromises);
+      await Promise.all(contentPromises);
+      
+      // Calculate effective weights based only on successful sources
+      const successfulSourceIds = Object.keys(fetchedContents);
+      if (successfulSourceIds.length === 0) {
+        error = 'Failed to fetch content from any source. Please try a different topic.';
+        loading = false;
+        loadingPhase = '';
+        return;
+      }
+      
+      // Sum weights of successful sources
+      const totalSuccessfulWeight = successfulSourceIds.reduce(
+        (sum, id) => sum + (weights[id] || 0), 
+        0
+      );
+      
+      // Normalize weights to 100% for successful sources only
+      if (totalSuccessfulWeight > 0) {
+        for (const id of successfulSourceIds) {
+          effectiveWeights[id] = (weights[id] || 0) / totalSuccessfulWeight;
+        }
+      } else {
+        // Equal distribution if all weights were 0
+        const equalShare = 1 / successfulSourceIds.length;
+        for (const id of successfulSourceIds) {
+          effectiveWeights[id] = equalShare;
+        }
+      }
+      effectiveWeights = { ...effectiveWeights };
+      
+      // Show warning if some sources failed
+      if (failedSources.size > 0) {
+        const failedNames = enabledSourceList
+          .filter(s => failedSources.has(s.id))
+          .map(s => s.name)
+          .join(', ');
+        console.warn(`Some sources failed to return content: ${failedNames}`);
+      }
+      
+      // Build results array for quality assessment
+      const validResults = successfulSourceIds.map(id => {
+        const source = sources.find(s => s.id === id)!;
+        return { source, content: fetchedContents[id] };
+      });
       
       // Calculate quality assessment with Shapley values
-      const validResults = results.filter(r => r.content !== null);
       if (validResults.length > 0) {
         const globalRatings: Record<string, { rating: number; winRate: number }> = {};
         for (const source of sources) {
@@ -532,11 +589,11 @@
       // Phase 2: Check if compare mode
       if (showCompareMode || selectedPreset.includes('Compare')) {
         loadingPhase = 'Comparing sources...';
-        result = generateSourceComparison(results.filter(r => r.content !== null));
+        result = generateSourceComparison(validResults);
       } else {
         // Phase 2: Blend with Grok
         loadingPhase = 'Blending knowledge with AI...';
-        const blendedResult = await blendWithGrok(results.filter(r => r.content !== null));
+        const blendedResult = await blendWithGrok(validResults);
         result = blendedResult;
       }
       
@@ -585,7 +642,7 @@
     
     // Add each source's content
     for (const sc of validContents) {
-      const weight = Math.round(weights[sc.source.id] * 100);
+      const weight = Math.round((effectiveWeights[sc.source.id] || 0) * 100);
       const q = sourceQualities[sc.source.id];
       output += `---\n\n## ${sc.source.name}\n`;
       output += `*Weight: ${weight}%`;
@@ -608,7 +665,7 @@
     for (const sc of validContents) {
       const contentLength = sc.content!.content.length;
       const hasImages = sc.content!.content.includes('![') ? 'Yes' : 'No';
-      const weight = Math.round(weights[sc.source.id] * 100);
+      const weight = Math.round((effectiveWeights[sc.source.id] || 0) * 100);
       output += `| ${sc.source.name} | ${contentLength.toLocaleString()} chars | ${hasImages} | ${weight}% |\n`;
     }
     
@@ -618,11 +675,11 @@
   async function blendWithGrok(
     sourceContents: { source: Source; content: SourceContent | null }[]
   ): Promise<string> {
-    // Build the context from all sources
+    // Build the context from all sources using effective weights
     const sourceContexts = sourceContents
       .filter(sc => sc.content)
       .map(sc => {
-        const weight = Math.round(weights[sc.source.id] * 100);
+        const weight = Math.round((effectiveWeights[sc.source.id] || 0) * 100);
         const truncatedContent = sc.content!.content.substring(0, 4000);
         return `### Source: ${sc.source.name} (Weight: ${weight}%)
 ${truncatedContent}`;
@@ -674,14 +731,14 @@ ${truncatedContent}`;
       return `# ${query}\n\nNo content available from the selected sources.`;
     }
 
-    // Sort by weight
-    validContents.sort((a, b) => (weights[b.source.id] || 0) - (weights[a.source.id] || 0));
+    // Sort by effective weight
+    validContents.sort((a, b) => (effectiveWeights[b.source.id] || 0) - (effectiveWeights[a.source.id] || 0));
 
     // Extract sections from each source
     const allSections: { heading: string; content: string; source: string; weight: number }[] = [];
     
     for (const sc of validContents) {
-      const sourceWeight = weights[sc.source.id] || 0;
+      const sourceWeight = effectiveWeights[sc.source.id] || 0;
       const text = sc.content!.content;
       
       const sections = text.split(/(?=^## )/m);
@@ -763,9 +820,9 @@ ${truncatedContent}`;
       output += `\n\n---\n\n*Format: ${formatNote}*`;
     }
 
-    // Source attribution
+    // Source attribution with effective weights
     const weightInfo = validContents
-      .map(sc => `- **${sc.source.name}**: ${Math.round(weights[sc.source.id] * 100)}%`)
+      .map(sc => `- **${sc.source.name}**: ${Math.round((effectiveWeights[sc.source.id] || 0) * 100)}%`)
       .join('\n');
 
     output += `\n\n---\n\n### Sources Blended\n\n${weightInfo}`;
@@ -777,6 +834,10 @@ ${truncatedContent}`;
   function clearResult() {
     result = '';
     fetchedContents = {};
+    failedSources = new Set();
+    effectiveWeights = {};
+    qualityAssessment = null;
+    sourceQualities = {};
   }
 
   function loadFromHistory(item: { query: string; result: string }) {
@@ -1150,12 +1211,12 @@ ${truncatedContent}`;
           <div class="flex flex-col items-center justify-center py-12">
             <div class="animate-spin rounded-full h-12 w-12 border-4 border-amber-500/30 border-t-amber-500"></div>
             <p class="text-slate-400 mt-6">{loadingPhase}</p>
-            <div class="flex items-center gap-2 mt-4">
+            <div class="flex items-center gap-2 mt-4 flex-wrap justify-center">
               {#each sources.filter(s => enabledSources[s.id]) as source}
                 <div class="flex items-center gap-1 px-2 py-1 bg-slate-800/50 rounded-full text-xs">
                   <img src={getLogo(source.slug)} alt="" class="w-4 h-4 object-contain" />
-                  <span class="{fetchedContents[source.id] ? 'text-green-400' : 'text-slate-500'}">
-                    {fetchedContents[source.id] ? '✓' : '...'}
+                  <span class="{fetchedContents[source.id] ? 'text-green-400' : failedSources.has(source.id) ? 'text-red-400' : 'text-slate-500'}">
+                    {fetchedContents[source.id] ? '✓' : failedSources.has(source.id) ? '✗' : '...'}
                   </span>
                 </div>
               {/each}
@@ -1226,6 +1287,22 @@ ${truncatedContent}`;
                   </div>
                 </div>
               {/if}
+              
+              <!-- Failed sources warning -->
+              {#if failedSources.size > 0}
+                <div class="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                  <div class="flex items-center gap-2 text-amber-400 text-sm">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    <span>
+                      {failedSources.size} source{failedSources.size > 1 ? 's' : ''} failed to load: 
+                      {sources.filter(s => failedSources.has(s.id)).map(s => s.name).join(', ')}
+                    </span>
+                  </div>
+                  <p class="text-xs text-slate-400 mt-1 ml-6">Weights have been redistributed among successful sources.</p>
+                </div>
+              {/if}
             
               <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {#each Object.entries(fetchedContents) as [sourceId, content]}
@@ -1235,7 +1312,7 @@ ${truncatedContent}`;
                     <div class="flex items-center gap-2 mb-3 pb-2 border-b border-slate-700/30">
                       <img src={getLogo(source?.slug || '')} alt="" class="w-5 h-5 object-contain flex-shrink-0" />
                       <span class="font-medium text-sm {getColor(source?.slug || '')} truncate">{source?.name || 'Unknown'}</span>
-                      <span class="text-xs text-amber-400 ml-auto flex-shrink-0">{Math.round(weights[sourceId] * 100)}%</span>
+                      <span class="text-xs text-amber-400 ml-auto flex-shrink-0">{Math.round((effectiveWeights[sourceId] || 0) * 100)}%</span>
                     </div>
                     {#if quality}
                       <div class="flex items-center gap-3 mb-3 text-xs flex-wrap">
@@ -1254,11 +1331,11 @@ ${truncatedContent}`;
               
               <!-- Source contribution bar -->
               <div class="mt-4 pt-4 border-t border-slate-700/30">
-                <div class="text-xs text-slate-500 mb-2">Source Contribution</div>
+                <div class="text-xs text-slate-500 mb-2">Source Contribution (Effective Weights)</div>
                 <div class="h-3 bg-slate-800 rounded-full overflow-hidden flex">
                   {#each Object.entries(fetchedContents) as [sourceId, _], index}
-                    {@const weight = weights[sourceId] * 100}
-                    {@const colors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500']}
+                    {@const weight = (effectiveWeights[sourceId] || 0) * 100}
+                    {@const colors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500', 'bg-pink-500']}
                     <div 
                       class="{colors[index % colors.length]} h-full transition-all"
                       style="width: {weight}%"
@@ -1268,11 +1345,11 @@ ${truncatedContent}`;
                 <div class="flex flex-wrap gap-3 mt-2">
                   {#each Object.entries(fetchedContents) as [sourceId, _], index}
                     {@const source = sources.find(s => s.id === sourceId)}
-                    {@const colors = ['text-blue-400', 'text-purple-400', 'text-amber-400']}
-                    {@const bgColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500']}
+                    {@const colors = ['text-blue-400', 'text-purple-400', 'text-amber-400', 'text-emerald-400', 'text-pink-400']}
+                    {@const bgColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500', 'bg-pink-500']}
                     <div class="flex items-center gap-1 text-xs {colors[index % colors.length]}">
                       <div class="w-2 h-2 rounded-full {bgColors[index % bgColors.length]}"></div>
-                      {source?.name}: {Math.round(weights[sourceId] * 100)}%
+                      {source?.name}: {Math.round((effectiveWeights[sourceId] || 0) * 100)}%
                     </div>
                   {/each}
                 </div>

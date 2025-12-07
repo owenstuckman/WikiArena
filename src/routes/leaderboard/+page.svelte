@@ -7,8 +7,8 @@
   export let data: Record<string, unknown> = {};
 
   // Sort method
-  type SortMethod = 'wins' | 'win_rate' | 'matches';
-  let sortMethod: SortMethod = 'wins';
+  type SortMethod = 'rating' | 'wins' | 'win_rate' | 'matches';
+  let sortMethod: SortMethod = 'rating';
 
   onMount(async () => {
     await leaderboardStore.load();
@@ -27,9 +27,45 @@
     return getSourceColor(slug as SourceSlug);
   }
 
-  // Sort entries by selected method - prioritizing actual performance
+  // Format Glicko-2 rating for display
+  function formatRating(rating: number): string {
+    return Math.round(rating).toString();
+  }
+
+  // Get confidence level based on rating deviation
+  function getConfidence(rd: number): { label: string; color: string; percent: number } {
+    // RD of 350 = very uncertain (new), RD of 50 = very confident
+    // Lower RD = higher confidence
+    const maxRD = 350;
+    const minRD = 50;
+    const normalized = Math.max(0, Math.min(100, ((maxRD - rd) / (maxRD - minRD)) * 100));
+    
+    if (rd <= 75) return { label: 'Very High', color: 'text-emerald-400', percent: normalized };
+    if (rd <= 100) return { label: 'High', color: 'text-green-400', percent: normalized };
+    if (rd <= 150) return { label: 'Medium', color: 'text-amber-400', percent: normalized };
+    if (rd <= 250) return { label: 'Low', color: 'text-orange-400', percent: normalized };
+    return { label: 'Very Low', color: 'text-red-400', percent: normalized };
+  }
+
+  // Get rating tier for styling
+  function getRatingTier(rating: number): { label: string; color: string; bg: string } {
+    if (rating >= 1800) return { label: 'Master', color: 'text-amber-400', bg: 'bg-amber-500/20' };
+    if (rating >= 1650) return { label: 'Expert', color: 'text-purple-400', bg: 'bg-purple-500/20' };
+    if (rating >= 1550) return { label: 'Advanced', color: 'text-blue-400', bg: 'bg-blue-500/20' };
+    if (rating >= 1450) return { label: 'Intermediate', color: 'text-cyan-400', bg: 'bg-cyan-500/20' };
+    return { label: 'Developing', color: 'text-slate-400', bg: 'bg-slate-500/20' };
+  }
+
+  // Sort entries by selected method
   $: sortedEntries = [...$leaderboardStore.entries].sort((a, b) => {
-    if (sortMethod === 'wins') {
+    if (sortMethod === 'rating') {
+      // Sort by Glicko-2 rating (higher = better)
+      // Consider RD as tiebreaker (lower RD = more confident = better)
+      if (Math.abs(b.rating - a.rating) > 10) {
+        return b.rating - a.rating;
+      }
+      return a.rating_deviation - b.rating_deviation;
+    } else if (sortMethod === 'wins') {
       // Sort by total wins, then by win rate
       if (b.total_wins !== a.total_wins) {
         return b.total_wins - a.total_wins;
@@ -40,11 +76,9 @@
       const aHasEnoughMatches = a.total_matches >= 5;
       const bHasEnoughMatches = b.total_matches >= 5;
       
-      // Sources with enough matches come first
       if (aHasEnoughMatches && !bHasEnoughMatches) return -1;
       if (!aHasEnoughMatches && bHasEnoughMatches) return 1;
       
-      // Both have enough matches or both don't
       if (b.win_rate !== a.win_rate) {
         return b.win_rate - a.win_rate;
       }
@@ -67,11 +101,11 @@
   <title>Leaderboard - WikiArena</title>
 </svelte:head>
 
-<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
   <!-- Header -->
   <div class="text-center mb-8">
     <h1 class="text-2xl font-bold mb-2">Leaderboard</h1>
-    <p class="text-slate-400 text-sm">Global rankings based on community votes</p>
+    <p class="text-slate-400 text-sm">Global rankings based on community votes using Glicko-2 rating system</p>
     {#if $leaderboardStore.lastUpdated}
       <p class="text-xs text-slate-500 mt-2">
         Last updated: {$leaderboardStore.lastUpdated.toLocaleTimeString()}
@@ -87,7 +121,16 @@
   </div>
 
   <!-- Sort Options -->
-  <div class="mb-6 flex justify-center gap-2">
+  <div class="mb-6 flex justify-center gap-2 flex-wrap">
+    <button
+      class="px-4 py-2 rounded-lg text-sm font-medium transition-all
+        {sortMethod === 'rating' 
+          ? 'bg-amber-500 text-slate-900' 
+          : 'bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'}"
+      on:click={() => sortMethod = 'rating'}
+    >
+      Glicko-2 Rating
+    </button>
     <button
       class="px-4 py-2 rounded-lg text-sm font-medium transition-all
         {sortMethod === 'wins' 
@@ -155,12 +198,14 @@
     <div class="space-y-3">
       {#each sortedEntries as entry, index (entry.id)}
         {@const rank = index + 1}
+        {@const ratingTier = getRatingTier(entry.rating)}
+        {@const confidence = getConfidence(entry.rating_deviation)}
         <div 
           class="leaderboard-row {rank <= 3 ? 'leaderboard-row-top' : ''}"
           style="animation-delay: {index * 50}ms"
         >
           <!-- Rank -->
-          <div class="flex-shrink-0 w-14 text-center">
+          <div class="flex-shrink-0 w-12 text-center">
             <span class="text-xl font-bold {rank === 1 ? 'text-amber-400' : rank === 2 ? 'text-slate-300' : rank === 3 ? 'text-amber-600' : 'text-slate-500'}">
               {getRankBadge(rank)}
             </span>
@@ -178,40 +223,53 @@
               </div>
               <div class="min-w-0">
                 <h3 class="font-semibold text-lg truncate {getColor(entry.slug)}">{entry.name}</h3>
-                <p class="text-sm text-slate-500">
-                  {entry.total_matches} matches played
-                </p>
+                <div class="flex items-center gap-2 text-sm">
+                  <span class="px-2 py-0.5 rounded text-xs {ratingTier.color} {ratingTier.bg}">{ratingTier.label}</span>
+                  <span class="text-slate-500">{entry.total_matches} matches</span>
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- Stats -->
-          <div class="flex items-center gap-4 sm:gap-8">
-            <!-- Win/Loss/Tie -->
-            <div class="hidden sm:flex items-center gap-4 text-sm">
+          <!-- Stats Grid -->
+          <div class="flex items-center gap-3 sm:gap-6">
+            <!-- Glicko-2 Rating -->
+            <div class="text-center min-w-[70px]">
+              <div class="text-2xl font-bold text-gradient">{formatRating(entry.rating)}</div>
+              <div class="text-xs text-slate-500">Rating</div>
+            </div>
+
+            <!-- Confidence / RD -->
+            <div class="hidden md:block text-center min-w-[80px]">
+              <div class="text-sm font-semibold {confidence.color}">{confidence.label}</div>
+              <div class="text-xs text-slate-500">±{Math.round(entry.rating_deviation)} RD</div>
+            </div>
+
+            <!-- Win/Loss/Tie - Desktop -->
+            <div class="hidden lg:flex items-center gap-3 text-sm">
               <div class="text-center">
-                <div class="text-2xl font-bold text-emerald-400">{entry.total_wins}</div>
+                <div class="text-xl font-bold text-emerald-400">{entry.total_wins}</div>
                 <div class="text-slate-500 text-xs">Wins</div>
               </div>
               <div class="text-center">
-                <div class="text-xl font-semibold text-red-400">{entry.total_losses}</div>
+                <div class="text-lg font-semibold text-red-400">{entry.total_losses}</div>
                 <div class="text-slate-500 text-xs">Losses</div>
               </div>
               <div class="text-center">
-                <div class="text-xl font-semibold text-slate-400">{entry.total_ties}</div>
+                <div class="text-lg font-semibold text-slate-400">{entry.total_ties}</div>
                 <div class="text-slate-500 text-xs">Ties</div>
               </div>
             </div>
             
-            <!-- Mobile: compact stats -->
-            <div class="sm:hidden text-center">
+            <!-- Mobile: compact W/L -->
+            <div class="lg:hidden text-center min-w-[50px]">
               <div class="text-lg font-bold text-emerald-400">{entry.total_wins}W</div>
-              <div class="text-xs text-slate-500">{entry.total_losses}L · {entry.total_ties}T</div>
+              <div class="text-xs text-slate-500">{entry.total_losses}L</div>
             </div>
 
             <!-- Win Rate -->
-            <div class="text-right min-w-[60px]">
-              <div class="text-2xl font-bold text-gradient">
+            <div class="text-center min-w-[55px]">
+              <div class="text-xl font-bold {entry.win_rate >= 50 ? 'text-emerald-400' : entry.win_rate >= 40 ? 'text-amber-400' : 'text-red-400'}">
                 {entry.win_rate}%
               </div>
               <div class="text-xs text-slate-500">
@@ -242,19 +300,99 @@
     <!-- Legend -->
     {#if sortedEntries.length > 0}
       <div class="mt-8 p-4 rounded-xl bg-slate-900/50 border border-slate-800/50">
-        <h3 class="font-semibold mb-3 text-sm text-slate-400">How Rankings Work</h3>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-          <div>
-            <span class="text-emerald-400 font-semibold">Wins</span>
-            <span class="text-slate-400"> — Total times this source was chosen as better</span>
+        <h3 class="font-semibold mb-4 text-sm text-slate-300">Understanding the Metrics</h3>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+          <!-- Glicko-2 Explanation -->
+          <div class="space-y-3">
+            <h4 class="text-amber-400 font-semibold">Glicko-2 Rating System</h4>
+            <p class="text-slate-400 text-xs leading-relaxed">
+              Glicko-2 is an advanced rating system (used by chess.com, Lichess, etc.) that considers not just wins/losses, 
+              but also the strength of opponents and how much we can trust a rating.
+            </p>
+            <div class="space-y-1">
+              <div class="flex items-center gap-2">
+                <span class="text-amber-400 font-mono text-xs">Rating</span>
+                <span class="text-slate-500 text-xs">— Skill estimate (starts at 1500)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-amber-400 font-mono text-xs">RD</span>
+                <span class="text-slate-500 text-xs">— Rating Deviation (uncertainty, lower = more confident)</span>
+              </div>
+            </div>
           </div>
-          <div>
-            <span class="text-red-400 font-semibold">Losses</span>
-            <span class="text-slate-400"> — Total times the other source was chosen</span>
+
+          <!-- Confidence Tiers -->
+          <div class="space-y-3">
+            <h4 class="text-amber-400 font-semibold">Confidence Levels</h4>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div class="flex items-center gap-2">
+                <span class="text-emerald-400">●</span>
+                <span class="text-slate-400">Very High (RD ≤ 75)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-green-400">●</span>
+                <span class="text-slate-400">High (RD ≤ 100)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-amber-400">●</span>
+                <span class="text-slate-400">Medium (RD ≤ 150)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-orange-400">●</span>
+                <span class="text-slate-400">Low (RD ≤ 250)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-red-400">●</span>
+                <span class="text-slate-400">Very Low (RD > 250)</span>
+              </div>
+            </div>
           </div>
-          <div>
-            <span class="text-amber-400 font-semibold">Win Rate</span>
-            <span class="text-slate-400"> — Percentage of matches won (wins ÷ total matches)</span>
+
+          <!-- Win Stats -->
+          <div class="space-y-3">
+            <h4 class="text-emerald-400 font-semibold">Win/Loss Stats</h4>
+            <div class="space-y-1">
+              <div class="flex items-center gap-2">
+                <span class="text-emerald-400 font-semibold">Wins</span>
+                <span class="text-slate-400 text-xs">— Times chosen as better by voters</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-red-400 font-semibold">Losses</span>
+                <span class="text-slate-400 text-xs">— Times the opponent was chosen</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-slate-400 font-semibold">Ties</span>
+                <span class="text-slate-400 text-xs">— "Both Good" or "Both Bad" votes</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Rating Tiers -->
+          <div class="space-y-3">
+            <h4 class="text-purple-400 font-semibold">Rating Tiers</h4>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded text-amber-400 bg-amber-500/20">Master</span>
+                <span class="text-slate-500">1800+</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded text-purple-400 bg-purple-500/20">Expert</span>
+                <span class="text-slate-500">1650+</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded text-blue-400 bg-blue-500/20">Advanced</span>
+                <span class="text-slate-500">1550+</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded text-cyan-400 bg-cyan-500/20">Intermediate</span>
+                <span class="text-slate-500">1450+</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded text-slate-400 bg-slate-500/20">Developing</span>
+                <span class="text-slate-500">&lt;1450</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -264,7 +402,7 @@
 
 <style>
   .leaderboard-row {
-    @apply flex items-center gap-4 p-4 rounded-xl bg-slate-900/50 border border-slate-800/50;
+    @apply flex items-center gap-3 p-4 rounded-xl bg-slate-900/50 border border-slate-800/50;
     animation: fadeInUp 0.5s ease-out forwards;
     opacity: 0;
   }

@@ -936,29 +936,31 @@ ${truncatedContent}`;
         </div>
         
         <!-- Total Weight Display -->
-        {@const totalWeight = getTotalWeight()}
-        {@const isValid = Math.abs(totalWeight - 1) < 0.01}
-        <div class="mt-4 pt-4 border-t border-slate-700/30">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="text-sm text-slate-400">Total:</span>
-              <span class="text-sm font-mono {isValid ? 'text-emerald-400' : 'text-red-400'}">
-                {Math.round(totalWeight * 100)}%
-              </span>
+        {#if true}
+          {@const totalWeight = getTotalWeight()}
+          {@const isValid = Math.abs(totalWeight - 1) < 0.01}
+          <div class="mt-4 pt-4 border-t border-slate-700/30">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="text-sm text-slate-400">Total:</span>
+                <span class="text-sm font-mono {isValid ? 'text-emerald-400' : 'text-red-400'}">
+                  {Math.round(totalWeight * 100)}%
+                </span>
+                {#if !isValid}
+                  <span class="text-xs text-red-400">(must equal 100%)</span>
+                {/if}
+              </div>
               {#if !isValid}
-                <span class="text-xs text-red-400">(must equal 100%)</span>
+                <button
+                  on:click={fixWeightsTo100}
+                  class="px-3 py-1 text-xs bg-amber-500/20 text-amber-400 rounded-lg hover:bg-amber-500/30 transition-colors"
+                >
+                  Fix to 100%
+                </button>
               {/if}
             </div>
-            {#if !isValid}
-              <button
-                on:click={fixWeightsTo100}
-                class="px-3 py-1 text-xs bg-amber-500/20 text-amber-400 rounded-lg hover:bg-amber-500/30 transition-colors"
-              >
-                Fix to 100%
-              </button>
-            {/if}
           </div>
-        </div>
+        {/if}
       </div>
 
       <!-- Output Style -->

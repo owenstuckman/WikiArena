@@ -1,15 +1,15 @@
 
 - [X] clean up the arena so it looks good when comparing the two 
-- [ ] get blending working 
+- [X] get blending working 
 - [X] blending shapely values
-- [ ] add more sources 
+- [X] add more sources 
 - 
 
-- [ ] start collecting data 
+- [X] start collecting data 
 - [X] make frontend look less like AI 
 
 
-- [ ] figure out next features + QOL
+- [X] figure out next features + QOL
 - [ ] setup bot prevention
     - [ ] captcha in supabase 
     - [ ] better rate limits 

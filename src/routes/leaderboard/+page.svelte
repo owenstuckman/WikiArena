@@ -34,8 +34,6 @@
 
   // Get confidence level based on rating deviation
   function getConfidence(rd: number): { label: string; color: string; percent: number } {
-    // RD of 350 = very uncertain (new), RD of 50 = very confident
-    // Lower RD = higher confidence
     const maxRD = 350;
     const minRD = 50;
     const normalized = Math.max(0, Math.min(100, ((maxRD - rd) / (maxRD - minRD)) * 100));
@@ -59,20 +57,16 @@
   // Sort entries by selected method
   $: sortedEntries = [...$leaderboardStore.entries].sort((a, b) => {
     if (sortMethod === 'rating') {
-      // Sort by Glicko-2 rating (higher = better)
-      // Consider RD as tiebreaker (lower RD = more confident = better)
       if (Math.abs(b.rating - a.rating) > 10) {
         return b.rating - a.rating;
       }
       return a.rating_deviation - b.rating_deviation;
     } else if (sortMethod === 'wins') {
-      // Sort by total wins, then by win rate
       if (b.total_wins !== a.total_wins) {
         return b.total_wins - a.total_wins;
       }
       return b.win_rate - a.win_rate;
     } else if (sortMethod === 'win_rate') {
-      // Sort by win rate (only if enough matches), then by total wins
       const aHasEnoughMatches = a.total_matches >= 5;
       const bHasEnoughMatches = b.total_matches >= 5;
       
@@ -84,7 +78,6 @@
       }
       return b.total_wins - a.total_wins;
     } else {
-      // Sort by total matches
       return b.total_matches - a.total_matches;
     }
   });
@@ -95,13 +88,48 @@
     if (rank === 3) return '🥉';
     return `#${rank}`;
   }
+
+  // Calculate quality metrics from leaderboard data
+  function getQualityMetrics(entry: typeof $leaderboardStore.entries[0]) {
+    const totalGames = entry.total_matches || 1;
+    const wins = entry.total_wins || 0;
+    const losses = entry.total_losses || 0;
+    const ties = entry.total_ties || 0;
+    
+    // Dominance: How often this source wins decisively
+    const dominance = totalGames > 0 ? (wins / totalGames) * 100 : 0;
+    
+    // Consistency: Low variance in performance (ties indicate close matches)
+    const consistency = totalGames > 0 ? ((wins + ties * 0.5) / totalGames) * 100 : 50;
+    
+    // Resilience: Ability to not lose
+    const resilience = totalGames > 0 ? ((totalGames - losses) / totalGames) * 100 : 100;
+    
+    // Rating stability based on RD
+    const stability = Math.max(0, Math.min(100, ((350 - entry.rating_deviation) / 300) * 100));
+    
+    return { dominance, consistency, resilience, stability };
+  }
+
+  // Get total stats across all sources
+  $: totalStats = $leaderboardStore.entries.reduce((acc, entry) => ({
+    matches: acc.matches + entry.total_matches,
+    wins: acc.wins + entry.total_wins,
+    losses: acc.losses + entry.total_losses,
+    ties: acc.ties + entry.total_ties,
+  }), { matches: 0, wins: 0, losses: 0, ties: 0 });
+
+  // Calculate head-to-head implied from stats
+  $: avgRating = $leaderboardStore.entries.length > 0 
+    ? Math.round($leaderboardStore.entries.reduce((sum, e) => sum + e.rating, 0) / $leaderboardStore.entries.length)
+    : 1500;
 </script>
 
 <svelte:head>
   <title>Leaderboard - WikiArena</title>
 </svelte:head>
 
-<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
   <!-- Header -->
   <div class="text-center mb-8">
     <h1 class="text-2xl font-bold mb-2">Leaderboard</h1>
@@ -195,6 +223,7 @@
 
   <!-- Leaderboard -->
   {:else}
+    <!-- Main Rankings -->
     <div class="space-y-3">
       {#each sortedEntries as entry, index (entry.id)}
         {@const rank = index + 1}
@@ -297,8 +326,179 @@
       </div>
     {/if}
 
-    <!-- Legend -->
+    <!-- Quality Metrics Section -->
     {#if sortedEntries.length > 0}
+      <div class="mt-12">
+        <div class="text-center mb-6">
+          <h2 class="text-xl font-bold mb-2">Quality Metrics</h2>
+          <p class="text-slate-400 text-sm">Detailed performance analysis for each source</p>
+        </div>
+
+        <!-- Global Stats Summary -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div class="p-4 rounded-xl bg-slate-900/50 border border-slate-800/50 text-center">
+            <div class="text-3xl font-bold text-amber-400">{Math.floor(totalStats.matches / 2)}</div>
+            <div class="text-sm text-slate-500">Total Comparisons</div>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/50 border border-slate-800/50 text-center">
+            <div class="text-3xl font-bold text-emerald-400">{totalStats.wins}</div>
+            <div class="text-sm text-slate-500">Decisive Wins</div>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/50 border border-slate-800/50 text-center">
+            <div class="text-3xl font-bold text-slate-400">{totalStats.ties}</div>
+            <div class="text-sm text-slate-500">Ties</div>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-900/50 border border-slate-800/50 text-center">
+            <div class="text-3xl font-bold text-gradient">{avgRating}</div>
+            <div class="text-sm text-slate-500">Avg Rating</div>
+          </div>
+        </div>
+
+        <!-- Per-Source Quality Breakdown -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {#each sortedEntries as entry (entry.id)}
+            {@const metrics = getQualityMetrics(entry)}
+            {@const ratingTier = getRatingTier(entry.rating)}
+            <div class="p-5 rounded-xl bg-slate-900/50 border border-slate-800/50">
+              <!-- Header -->
+              <div class="flex items-center gap-3 mb-4 pb-3 border-b border-slate-700/50">
+                <div class="w-10 h-10 rounded-lg bg-white/10 p-1.5 flex items-center justify-center">
+                  <img src={getLogo(entry.slug)} alt={entry.name} class="max-w-full max-h-full object-contain" />
+                </div>
+                <div class="flex-1">
+                  <h3 class="font-semibold {getColor(entry.slug)}">{entry.name}</h3>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs {ratingTier.color}">{ratingTier.label}</span>
+                    <span class="text-xs text-slate-500">•</span>
+                    <span class="text-xs text-slate-500">{formatRating(entry.rating)} rating</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Quality Bars -->
+              <div class="space-y-3">
+                <!-- Dominance -->
+                <div>
+                  <div class="flex justify-between text-xs mb-1">
+                    <span class="text-slate-400">Dominance</span>
+                    <span class="text-emerald-400 font-medium">{metrics.dominance.toFixed(1)}%</span>
+                  </div>
+                  <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div 
+                      class="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full transition-all"
+                      style="width: {metrics.dominance}%"
+                    ></div>
+                  </div>
+                </div>
+
+                <!-- Consistency -->
+                <div>
+                  <div class="flex justify-between text-xs mb-1">
+                    <span class="text-slate-400">Consistency</span>
+                    <span class="text-blue-400 font-medium">{metrics.consistency.toFixed(1)}%</span>
+                  </div>
+                  <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div 
+                      class="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all"
+                      style="width: {metrics.consistency}%"
+                    ></div>
+                  </div>
+                </div>
+
+                <!-- Resilience -->
+                <div>
+                  <div class="flex justify-between text-xs mb-1">
+                    <span class="text-slate-400">Resilience</span>
+                    <span class="text-purple-400 font-medium">{metrics.resilience.toFixed(1)}%</span>
+                  </div>
+                  <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div 
+                      class="h-full bg-gradient-to-r from-purple-500 to-purple-400 rounded-full transition-all"
+                      style="width: {metrics.resilience}%"
+                    ></div>
+                  </div>
+                </div>
+
+                <!-- Rating Stability -->
+                <div>
+                  <div class="flex justify-between text-xs mb-1">
+                    <span class="text-slate-400">Rating Stability</span>
+                    <span class="text-amber-400 font-medium">{metrics.stability.toFixed(1)}%</span>
+                  </div>
+                  <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div 
+                      class="h-full bg-gradient-to-r from-amber-500 to-amber-400 rounded-full transition-all"
+                      style="width: {metrics.stability}%"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Stats Summary -->
+              <div class="mt-4 pt-3 border-t border-slate-700/50">
+                <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div>
+                    <div class="font-bold text-emerald-400">{entry.total_wins}</div>
+                    <div class="text-slate-500">Wins</div>
+                  </div>
+                  <div>
+                    <div class="font-bold text-red-400">{entry.total_losses}</div>
+                    <div class="text-slate-500">Losses</div>
+                  </div>
+                  <div>
+                    <div class="font-bold text-slate-400">{entry.total_ties}</div>
+                    <div class="text-slate-500">Ties</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          {/each}
+        </div>
+
+        <!-- Rating Distribution -->
+        {#if sortedEntries.length > 1}
+          <div class="mt-8 p-6 rounded-xl bg-slate-900/50 border border-slate-800/50">
+            <h3 class="font-semibold mb-4 text-slate-300">Rating Distribution</h3>
+            <div class="space-y-3">
+              {#each sortedEntries as entry (entry.id)}
+                {@const minRating = Math.min(...sortedEntries.map(e => e.rating))}
+                {@const maxRating = Math.max(...sortedEntries.map(e => e.rating))}
+                {@const range = maxRating - minRating || 100}
+                {@const position = ((entry.rating - minRating) / range) * 100}
+                <div class="flex items-center gap-4">
+                  <div class="w-32 flex items-center gap-2 flex-shrink-0">
+                    <img src={getLogo(entry.slug)} alt="" class="w-5 h-5 object-contain" />
+                    <span class="text-sm {getColor(entry.slug)} truncate">{entry.name}</span>
+                  </div>
+                  <div class="flex-1 relative">
+                    <div class="h-6 bg-slate-800 rounded-full overflow-hidden">
+                      <div 
+                        class="h-full bg-gradient-to-r from-slate-700 to-amber-500/50 rounded-full transition-all relative"
+                        style="width: {Math.max(5, position)}%"
+                      >
+                      </div>
+                    </div>
+                    <div 
+                      class="absolute top-0 h-6 flex items-center"
+                      style="left: {Math.max(2, position)}%"
+                    >
+                      <span class="text-xs font-bold text-white bg-slate-900/80 px-2 py-0.5 rounded">
+                        {formatRating(entry.rating)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+            <div class="flex justify-between text-xs text-slate-500 mt-2">
+              <span>{formatRating(Math.min(...sortedEntries.map(e => e.rating)))}</span>
+              <span>{formatRating(Math.max(...sortedEntries.map(e => e.rating)))}</span>
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      <!-- Legend -->
       <div class="mt-8 p-4 rounded-xl bg-slate-900/50 border border-slate-800/50">
         <h3 class="font-semibold mb-4 text-sm text-slate-300">Understanding the Metrics</h3>
         
@@ -318,6 +518,29 @@
               <div class="flex items-center gap-2">
                 <span class="text-amber-400 font-mono text-xs">RD</span>
                 <span class="text-slate-500 text-xs">— Rating Deviation (uncertainty, lower = more confident)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quality Metrics -->
+          <div class="space-y-3">
+            <h4 class="text-emerald-400 font-semibold">Quality Metrics Explained</h4>
+            <div class="space-y-1 text-xs">
+              <div class="flex items-center gap-2">
+                <span class="text-emerald-400 font-semibold">Dominance</span>
+                <span class="text-slate-400">— Win percentage (higher = more preferred)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-blue-400 font-semibold">Consistency</span>
+                <span class="text-slate-400">— How reliably it performs (wins + half ties)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-purple-400 font-semibold">Resilience</span>
+                <span class="text-slate-400">— Ability to avoid losses</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-amber-400 font-semibold">Stability</span>
+                <span class="text-slate-400">— How settled the rating is (based on RD)</span>
               </div>
             </div>
           </div>
@@ -345,25 +568,6 @@
               <div class="flex items-center gap-2">
                 <span class="text-red-400">●</span>
                 <span class="text-slate-400">Very Low (RD > 250)</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Win Stats -->
-          <div class="space-y-3">
-            <h4 class="text-emerald-400 font-semibold">Win/Loss Stats</h4>
-            <div class="space-y-1">
-              <div class="flex items-center gap-2">
-                <span class="text-emerald-400 font-semibold">Wins</span>
-                <span class="text-slate-400 text-xs">— Times chosen as better by voters</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="text-red-400 font-semibold">Losses</span>
-                <span class="text-slate-400 text-xs">— Times the opponent was chosen</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="text-slate-400 font-semibold">Ties</span>
-                <span class="text-slate-400 text-xs">— "Both Good" or "Both Bad" votes</span>
               </div>
             </div>
           </div>

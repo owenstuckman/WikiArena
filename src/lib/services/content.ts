@@ -611,11 +611,10 @@ export async function getRandomWikipediaArticle(): Promise<string | null> {
 }
 
 // ============================================
-// GROKIPEDIA (via external scraper endpoint)
+// GROKIPEDIA (via server-side API to avoid CORS)
 // ============================================
 
-const GROKIPEDIA_BASE_URL = 'https://infoareaselenium.onrender.com';
-const GROKIPEDIA_SCRAPE_ENDPOINT = 'https://infoareaselenium.onrender.com/scrape/grokipedia';
+const GROKIPEDIA_BASE_URL = 'https://grokipedia.com/page';
 
 export interface GrokipediaArticle {
   title: string;
@@ -625,25 +624,29 @@ export interface GrokipediaArticle {
 }
 
 /**
- * Fetch Grokipedia content via external scraper endpoint
+ * Fetch Grokipedia content via server-side API (to avoid CORS issues)
  * Returns null if content not found - allows arena to try different source
- *
- * Note: apiKey is kept for signature compatibility but is not used here.
  */
 export async function fetchGrokipediaContent(
   topic: string,
   apiKey?: string
 ): Promise<GrokipediaArticle | null> {
   try {
-    const response = await fetch(`${GROKIPEDIA_SCRAPE_ENDPOINT}?topic=${(topic)}`);
+    // Use our server-side API endpoint to avoid CORS
+    const response = await fetch(`/api/grokipedia?topic=${encodeURIComponent(topic)}`);
     
     if (!response.ok) {
-      console.error('Grokipedia scrape API error:', response.status);
+      console.error('Grokipedia API error:', response.status);
       return null; // Return null so arena can try different source
     }
 
     const data = await response.json();
     
+    // If notFound, return null so arena can try different source
+    if (data.notFound || (data.error && !data.content) || !data.content) {
+      console.log('Grokipedia: No content found for', topic);
+      return null;
+    }
     
     return {
       title: data.title || topic,

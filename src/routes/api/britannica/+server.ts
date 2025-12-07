@@ -4,6 +4,10 @@ import { XAI_API_KEY } from '$env/static/private';
 
 const BRITANNICA_BASE_URL = 'https://www.britannica.com';
 
+// Phrase to remove if it appears anywhere in extracted/generated content
+const EDITOR_REVIEW_PHRASE =
+  "Our editors will review what you’ve submitted and determine whether to revise the article.";
+
 interface BritannicaResult {
   title: string;
   content: string;
@@ -84,7 +88,7 @@ async function tryFetch(topic: string): Promise<BritannicaResult | null> {
         console.log("[Fetch] Direct content extraction SUCCESS");
         return {
           title: topic,
-          content,
+          content: sanitizeContent(content),
           url: articleUrl,
           isFallback: false,
           source: 'scrape'
@@ -132,7 +136,7 @@ async function tryFetch(topic: string): Promise<BritannicaResult | null> {
       console.log("[Fetch] Search-based content extraction SUCCESS");
       return {
         title: topic,
-        content,
+        content: sanitizeContent(content),
         url: foundUrl,
         isFallback: false,
         source: 'scrape'
@@ -314,7 +318,7 @@ async function tryPlaywright(topic: string): Promise<BritannicaResult | null> {
       console.log("[Playwright] Extracted content length:", content.length);
       return {
         title: topic,
-        content,
+        content: sanitizeContent(content),
         url: articleUrl,
         isFallback: false,
         source: "playwright"
@@ -391,7 +395,7 @@ async function tryGrokApi(topic: string): Promise<BritannicaResult | null> {
 
     return {
       title: topic,
-      content,
+      content: sanitizeContent(content),
       url: `${BRITANNICA_BASE_URL}/search?query=${encodeURIComponent(topic)}`,
       isFallback: false,
       source: "grok"
@@ -466,6 +470,31 @@ function parseBritannicaHtml(html: string, topic: string): string {
   console.log("[Parse] Final paragraph count:", paragraphs.length);
 
   let content = `# ${topic}\n\n${paragraphs.join("\n\n")}`;
+  content = sanitizeContent(content);
+
   return content.trim();
 }
 
+
+
+/* -------------------------------------------------------------------------- */
+/*                                 SANITIZATION                                */
+/* -------------------------------------------------------------------------- */
+
+function sanitizeContent(input: string): string {
+  if (!input) return input;
+
+  // Remove the exact phrase (smart apostrophe)
+  let out = input.replaceAll(EDITOR_REVIEW_PHRASE, '');
+
+  // Also remove a straight-apostrophe variant just in case
+  out = out.replaceAll(
+    "Our editors will review what you've submitted and determine whether to revise the article.",
+    ''
+  );
+
+  // Clean up any leftover double blank lines caused by removal
+  out = out.replace(/\n{3,}/g, '\n\n').trim();
+
+  return out;
+}

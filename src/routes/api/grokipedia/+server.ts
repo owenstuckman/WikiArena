@@ -2,17 +2,30 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 
 /**
- * Grokipedia Scraper Route (Selenium-first)
+ * Grokipedia Scraper Route (Selenium-first, preserve formatting + links)
  *
- * Why:
- * - Grokipedia appears JS-heavy. Raw fetch often returns a thin shell.
- * - Selenium DOM extraction after hydration is more reliable than regex parsing.
+ * Goals:
+ * - Capture real JS-rendered page content.
+ * - Preserve links + basic formatting in Markdown.
+ * - Skip "page does not exist" renders even if the route loads.
  *
- * Requirements for Selenium path:
+ * Strategy:
+ * 1) Selenium:
+ *    - Load page
+ *    - Conservative cleanup (do NOT remove headers generically)
+ *    - Choose best root (article/main/content)
+ *    - Return hydrated HTML for that root
+ *    - Convert HTML -> Markdown preserving links/formatting
+ * 2) Raw fetch fallback with the same HTML -> Markdown conversion
+ * 3) Fallback object if not found
+ *
+ * Requirements for Selenium:
  *   npm i selenium-webdriver
- *   A runtime with Chrome/Chromium available (best with adapter-node/VPS/Docker)
+ *   Chrome/Chromium available in runtime
  *
- * If Selenium/Chrome isn't available, this route will gracefully fall back to fetch scraping.
+ * Best environments:
+ * - adapter-node
+ * - VPS/Docker
  */
 
 const GROKIPEDIA_BASE_URL = 'https://grokipedia.com';
@@ -52,13 +65,10 @@ export const GET: RequestHandler = async ({ url }) => {
   // 1) Selenium first
   const seleniumResult = await trySelenium(cleanedTopic, urlPatterns, debugNotes);
   if (seleniumResult) {
-    if (debugEnabled) {
-      seleniumResult.debug = debugPayloadBase;
-    }
+    if (debugEnabled) seleniumResult.debug = debugPayloadBase;
     return json(seleniumResult);
   }
 
-  // If Selenium failed due to environment, mark it
   if (debugNotes.some(n => n.toLowerCase().includes('selenium unavailable'))) {
     debugPayloadBase.seleniumAvailable = false;
   }
@@ -66,9 +76,7 @@ export const GET: RequestHandler = async ({ url }) => {
   // 2) Raw fetch fallback
   const fetchResult = await tryFetch(cleanedTopic, urlPatterns, debugNotes);
   if (fetchResult) {
-    if (debugEnabled) {
-      fetchResult.debug = debugPayloadBase;
-    }
+    if (debugEnabled) fetchResult.debug = debugPayloadBase;
     return json(fetchResult);
   }
 
@@ -83,16 +91,14 @@ export const GET: RequestHandler = async ({ url }) => {
     source: 'fallback'
   };
 
-  if (debugEnabled) {
-    fallback.debug = debugPayloadBase;
-  }
+  if (debugEnabled) fallback.debug = debugPayloadBase;
 
   return json(fallback);
 };
 
 /**
  * Build URL patterns to maximize hit rate.
- * Your example: https://grokipedia.com/page/Chinese_language
+ * Example: https://grokipedia.com/page/Chinese_language
  */
 function buildUrlPatterns(topic: string): string[] {
   const baseSlug = topic.replace(/\s+/g, '_');
@@ -104,14 +110,19 @@ function buildUrlPatterns(topic: string): string[] {
 
   const lowerSlug = topic.toLowerCase().replace(/\s+/g, '_');
 
-  const slugs = Array.from(new Set([
-    baseSlug,
-    titleCaseSlug,
-    lowerSlug,
-    topic
-  ]));
+  const slugs = Array.from(new Set([baseSlug, titleCaseSlug, lowerSlug, topic]));
 
   return slugs.map(s => `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(s)}`);
+}
+
+function looksLikeNotFoundText(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('page not found') ||
+    lower.includes('does not exist') ||
+    lower.includes('no article found') ||
+    /\b404\b/.test(lower)
+  );
 }
 
 /* ------------------------------ SELENIUM ------------------------------ */
@@ -136,7 +147,7 @@ async function trySelenium(
       '--window-size=1280,720'
     );
 
-    // If you ever need a custom Chrome path:
+    // If you need a custom Chrome binary:
     // options.setChromeBinaryPath(process.env.CHROME_BIN);
 
     const driver = await new Builder()
@@ -150,8 +161,8 @@ async function trySelenium(
           console.log(`Selenium trying: ${pageUrl}`);
           await driver.get(pageUrl);
 
-          // Hydration buffers for SPA content
-          await driver.sleep(1200);
+          // Hydration buffers
+          await driver.sleep(1800);
 
           // Soft wait for meaningful body text
           try {
@@ -159,140 +170,88 @@ async function trySelenium(
               const body = await driver.findElement(By.css('body'));
               const txt = await body.getText();
               return (txt || '').trim().length > 200;
-            }, 7000);
+            }, 9000);
           } catch {
             // continue anyway
           }
 
-          // DOM-based extraction after hydration
+          // DOM-based HTML extraction to preserve formatting + links
           const extracted = await driver.executeScript(
             function (topicName: string) {
               try {
+                // Conservative cleanup:
+                // avoid removing header tags/classes to prevent losing title/lead.
                 const killSelectors = [
-                  'nav', 'footer', 'header', 'aside', 'script', 'style',
-                  '[class*="sidebar"]', '[class*="menu"]', '[class*="nav"]',
-                  '[class*="footer"]', '[class*="header"]', '[class*="ad"]',
-                  '[class*="cookie"]', '[class*="popup"]', '[role="navigation"]'
+                  'script',
+                  'style',
+                  'nav',
+                  'footer',
+                  'aside',
+                  '[role="navigation"]',
+                  '[aria-label="navigation"]',
+                  '[class*="cookie"]',
+                  '[class*="consent"]',
+                  '[class*="banner"]',
+                  '[class*="popup"]',
+                  '[class*="modal"]',
+                  '[class*="advert"]',
+                  '[class*="ads"]'
                 ];
 
                 document.querySelectorAll(killSelectors.join(','))
                   .forEach(el => el.remove());
 
-                const contentSelectors = [
-                  'article',
-                  'main',
-                  '[role="main"]',
-                  '#content',
-                  '#main-content',
-                  '.content',
-                  '.prose',
-                  '[class*="article"]',
-                  '[class*="content"]',
-                  '[class*="markdown"]',
-                  '[class*="prose"]',
-                  '[class*="page"]'
-                ];
+                const preferred =
+                  document.querySelector('article') ||
+                  document.querySelector('main') ||
+                  document.querySelector('#content') ||
+                  document.querySelector('#main-content') ||
+                  document.querySelector('.content') ||
+                  document.querySelector('[class*="article"]') ||
+                  document.querySelector('[class*="content"]');
 
-                const candidates: Element[] = [];
-
-                for (const sel of contentSelectors) {
-                  document.querySelectorAll(sel).forEach(el => candidates.push(el));
-                }
-
-                document.querySelectorAll('div, section')
-                  .forEach(el => candidates.push(el));
-
-                let best: Element | null = null;
-                let bestLen = 0;
-
-                for (const el of candidates) {
-                  const text = (el.textContent || '').trim();
-                  if (text.length > bestLen && text.length > 200) {
-                    best = el;
-                    bestLen = text.length;
-                  }
-                }
-
-                if (!best) {
-                  best = document.body;
-                }
+                const root = preferred || document.body;
 
                 const titleEl =
+                  root.querySelector('h1') ||
                   document.querySelector('h1') ||
                   document.querySelector('title');
 
                 const title = (titleEl?.textContent || '').trim() || topicName;
 
-                const elements = best.querySelectorAll(
-                  'h1, h2, h3, h4, p, li, blockquote'
-                );
+                const html = (root as HTMLElement).innerHTML || '';
+                const textCheck = (root as HTMLElement).innerText?.trim() || '';
 
-                const out: string[] = [];
+                if (!html || textCheck.length < 120) return null;
 
-                elements.forEach(el => {
-                  const t = (el.textContent || '').trim();
-                  if (!t) return;
-                  if (t.length < 12) return;
-
-                  const lower = t.toLowerCase();
-                  if (
-                    lower.includes('sign in') ||
-                    lower.includes('sign up') ||
-                    lower.includes('privacy') ||
-                    lower.includes('terms') ||
-                    lower.includes('cookie')
-                  ) {
-                    return;
-                  }
-
-                  const tag = el.tagName.toLowerCase();
-                  if (tag === 'h1') out.push(`# ${t}`);
-                  else if (tag === 'h2') out.push(`## ${t}`);
-                  else if (tag === 'h3') out.push(`### ${t}`);
-                  else if (tag === 'h4') out.push(`#### ${t}`);
-                  else if (tag === 'li') out.push(`- ${t}`);
-                  else if (tag === 'blockquote') out.push(`> ${t}`);
-                  else out.push(t);
-                });
-
-                let content = out.join('\n\n')
-                  .replace(/\n{3,}/g, '\n\n')
-                  .trim();
-
-                // Structure too thin, fall back to raw text
-                if (content.length < 200) {
-                  const raw = (best.textContent || '').trim();
-                  if (raw.length > 200) {
-                    content = `# ${title}\n\n${raw}`;
-                  }
-                }
-
-                if (!content || content.length < 120) {
+                const lower = textCheck.toLowerCase();
+                if (
+                  lower.includes('page not found') ||
+                  lower.includes('does not exist') ||
+                  lower.includes('no article found') ||
+                  /\b404\b/.test(lower)
+                ) {
                   return null;
                 }
 
-                if (!content.startsWith('#')) {
-                  content = `# ${title}\n\n${content}`;
-                }
-
-                return { title, content };
+                return { title, html, textCheck };
               } catch {
                 return null;
               }
             },
             topic
-          ) as { title: string; content: string } | null;
+          ) as { title: string; html: string; textCheck: string } | null;
 
-          if (extracted?.content) {
-            const cleaned = extracted.content
-              .replace(/\n{3,}/g, '\n\n')
-              .trim();
+          if (extracted?.html) {
+            if (looksLikeNotFoundText(extracted.textCheck || '')) {
+              continue;
+            }
 
-            // Sometimes real pages are shorter than you'd think
-            if (cleaned.length > 150) {
+            const content = parseHtmlToMarkdown(extracted.html, extracted.title);
+            if (content && content.length > 150 && !looksLikeNotFoundText(content)) {
               return {
                 title: extracted.title,
-                content: cleaned,
+                content,
                 url: pageUrl,
                 isFallback: false,
                 source: 'selenium'
@@ -300,35 +259,50 @@ async function trySelenium(
             }
           }
 
-          // As a secondary fallback within Selenium, parse the hydrated HTML
-          // This helps if the DOM selection missed but the HTML is now rich.
-          try {
-            const html = await driver.getPageSource();
-            if (html) {
-              const lower = html.toLowerCase();
-              if (
-                !lower.includes('page not found') &&
-                !lower.includes('does not exist') &&
-                !lower.includes('no article found') &&
-                !lower.includes('404')
-              ) {
-                const content = parseHtmlToMarkdown(html, topic);
-                if (content && content.length > 150) {
-                  const titleFromContent =
-                    content.match(/^#\s+(.+)$/m)?.[1]?.trim() || topic;
+          // Secondary fallback: use hydrated full body HTML if root selection was odd
+          const bodyExtract = await driver.executeScript(function () {
+            try {
+              const html = document.body?.innerHTML || '';
+              const textCheck = document.body?.innerText?.trim() || '';
+              const titleEl =
+                document.querySelector('h1') ||
+                document.querySelector('title');
 
-                  return {
-                    title: titleFromContent,
-                    content,
-                    url: pageUrl,
-                    isFallback: false,
-                    source: 'selenium'
-                  };
-                }
+              const title = (titleEl?.textContent || '').trim() || 'Untitled';
+
+              if (!html || textCheck.length < 120) return null;
+
+              const lower = textCheck.toLowerCase();
+              if (
+                lower.includes('page not found') ||
+                lower.includes('does not exist') ||
+                lower.includes('no article found') ||
+                /\b404\b/.test(lower)
+              ) {
+                return null;
               }
+
+              return { title, html, textCheck };
+            } catch {
+              return null;
             }
-          } catch {
-            // ignore
+          }) as { title: string; html: string; textCheck: string } | null;
+
+          if (bodyExtract?.html) {
+            if (looksLikeNotFoundText(bodyExtract.textCheck || '')) {
+              continue;
+            }
+
+            const content = parseHtmlToMarkdown(bodyExtract.html, bodyExtract.title);
+            if (content && content.length > 150 && !looksLikeNotFoundText(content)) {
+              return {
+                title: bodyExtract.title || topic,
+                content,
+                url: pageUrl,
+                isFallback: false,
+                source: 'selenium'
+              };
+            }
           }
 
         } catch (e) {
@@ -395,7 +369,7 @@ async function tryFetch(
 
       const content = parseHtmlToMarkdown(html, topic);
 
-      if (content && content.length > 150) {
+      if (content && content.length > 150 && !looksLikeNotFoundText(content)) {
         const titleFromContent =
           content.match(/^#\s+(.+)$/m)?.[1]?.trim() || topic;
 
@@ -408,7 +382,9 @@ async function tryFetch(
         };
       }
     } catch (e) {
-      const msg = `Fetch failed for ${pageUrl}: ${e instanceof Error ? e.message : String(e)}`;
+      const msg = `Fetch failed for ${pageUrl}: ${
+        e instanceof Error ? e.message : String(e)
+      }`;
       console.log(msg);
       debugNotes.push(msg);
       continue;
@@ -419,72 +395,110 @@ async function tryFetch(
 }
 
 /* --------------------------- HTML → MARKDOWN -------------------------- */
-
-function parseHtmlToMarkdown(html: string, topic: string): string {
+/**
+ * Converts HTML into Markdown while preserving:
+ * - headings
+ * - bold/italic
+ * - lists
+ * - blockquotes
+ * - code/pre
+ * - links
+ *
+ * This is intentionally conservative and general.
+ * It aims to keep "everything" readable rather than perfectly match a specific site schema.
+ */
+function parseHtmlToMarkdown(html: string, titleFallback: string): string {
   let content = html;
 
-  const contentPatterns = [
-    /<article[^>]*>([\s\S]*?)<\/article>/i,
-    /<main[^>]*>([\s\S]*?)<\/main>/i,
-    /<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-    /<div[^>]*class="[^"]*article[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-  ];
-
-  for (const pattern of contentPatterns) {
-    const match = html.match(pattern);
-    if (match && match[1] && match[1].length > 150) {
-      content = match[1];
-      break;
-    }
-  }
-
-  // Remove unwanted elements
+  // Remove scripts/styles early
   content = content.replace(/<script[\s\S]*?<\/script>/gi, '');
   content = content.replace(/<style[\s\S]*?<\/style>/gi, '');
-  content = content.replace(/<nav[\s\S]*?<\/nav>/gi, '');
-  content = content.replace(/<footer[\s\S]*?<\/footer>/gi, '');
-  content = content.replace(/<header[\s\S]*?<\/header>/gi, '');
-  content = content.replace(/<aside[\s\S]*?<\/aside>/gi, '');
-  content = content.replace(/<form[\s\S]*?<\/form>/gi, '');
-  content = content.replace(/<button[\s\S]*?<\/button>/gi, '');
 
-  // Convert headers
+  // Preserve line breaks
+  content = content.replace(/<br\s*\/?>/gi, '\n');
+
+  // Preserve preformatted code blocks
+  content = content.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_m, inner) => {
+    const cleaned = stripTags(inner);
+    return `\n\`\`\`\n${decodeEntities(cleaned).trim()}\n\`\`\`\n`;
+  });
+
+  // Preserve inline code
+  content = content.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_m, inner) => {
+    const cleaned = decodeEntities(stripTags(inner)).replace(/\s+/g, ' ').trim();
+    return cleaned ? `\`${cleaned}\`` : '';
+  });
+
+  // Convert links BEFORE stripping tags
+  content = content.replace(
+    /<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    (_match, href, inner) => {
+      const text = decodeEntities(stripTags(inner)).replace(/\s+/g, ' ').trim();
+      if (!text) return href;
+      return `[${text}](${href})`;
+    }
+  );
+
+  // Images -> keep alt text if present
+  content = content.replace(
+    /<img\s+[^>]*alt=["']([^"']*)["'][^>]*>/gi,
+    (_m, alt) => (alt ? `\n\n![${decodeEntities(alt)}]\n\n` : '')
+  );
+  content = content.replace(/<img\s+[^>]*>/gi, '');
+
+  // Headings
   content = content.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
   content = content.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n');
   content = content.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n');
   content = content.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '\n#### $1\n');
+  content = content.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, '\n##### $1\n');
+  content = content.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, '\n###### $1\n');
 
-  // Convert paragraphs
+  // Blockquotes
+  content = content.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, '\n> $1\n');
+
+  // Paragraphs
   content = content.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n$1\n');
 
-  // Convert lists
-  content = content.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n');
+  // Lists
+  content = content.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1');
   content = content.replace(/<\/?[uo]l[^>]*>/gi, '\n');
 
-  // Convert formatting
+  // Bold/italic
   content = content.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi, '**$2**');
   content = content.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, '*$2*');
-  content = content.replace(/<br\s*\/?>/gi, '\n');
 
   // Remove remaining tags
-  content = content.replace(/<[^>]+>/g, '');
+  content = stripTags(content);
 
   // Decode entities
-  content = content.replace(/&nbsp;/g, ' ');
-  content = content.replace(/&amp;/g, '&');
-  content = content.replace(/&lt;/g, '<');
-  content = content.replace(/&gt;/g, '>');
-  content = content.replace(/&quot;/g, '"');
-  content = content.replace(/&#39;/g, "'");
-  content = content.replace(/&mdash;/g, '—');
-  content = content.replace(/&ndash;/g, '–');
+  content = decodeEntities(content);
 
-  // Clean up whitespace
+  // Clean whitespace
+  content = content.replace(/[ \t]+\n/g, '\n');
   content = content.replace(/\n{3,}/g, '\n\n').trim();
 
+  // Ensure top-level title
   if (!content.startsWith('#')) {
-    content = `# ${topic}\n\n${content}`;
+    const safeTitle = titleFallback?.trim() || 'Untitled';
+    content = `# ${safeTitle}\n\n${content}`;
   }
 
   return content;
+}
+
+function stripTags(input: string): string {
+  return input.replace(/<[^>]+>/g, '');
+}
+
+function decodeEntities(input: string): string {
+  return input
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&mdash;/g, '—')
+    .replace(/&ndash;/g, '–');
 }

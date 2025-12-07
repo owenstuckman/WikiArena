@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store';
-import { getSupabase, isSupabaseConfigured } from '$lib/services/supabase';
+import { browser } from '$app/environment';
+import { supabase, isSupabaseConfigured, getSessionId } from '$lib/supabaseClient';
 import type { UserPreference, Vote, BlendConfig } from '$lib/types/database';
 
 interface UserState {
@@ -14,26 +15,9 @@ interface UserState {
   error: string | null;
 }
 
-// Generate or retrieve session ID
-function getOrCreateSessionId(): string {
-  if (typeof window === 'undefined') {
-    return crypto.randomUUID();
-  }
-  
-  const STORAGE_KEY = 'knowledge-arena-session';
-  let sessionId = localStorage.getItem(STORAGE_KEY);
-  
-  if (!sessionId) {
-    sessionId = crypto.randomUUID();
-    localStorage.setItem(STORAGE_KEY, sessionId);
-  }
-  
-  return sessionId;
-}
-
 const initialState: UserState = {
   userId: null,
-  sessionId: typeof window !== 'undefined' ? getOrCreateSessionId() : '',
+  sessionId: '',
   isAuthenticated: false,
   preferences: [],
   voteHistory: [],
@@ -53,16 +37,13 @@ function createUserStore() {
      * Initialize user state - check for existing session
      */
     async init() {
-      if (!isSupabaseConfigured) {
-        update(s => ({
-          ...s,
-          sessionId: getOrCreateSessionId(),
-        }));
-        return;
-      }
-
-      const supabase = getSupabase();
+      if (!browser) return;
       
+      const sessionId = getSessionId();
+      update(s => ({ ...s, sessionId }));
+
+      if (!isSupabaseConfigured) return;
+
       try {
         const { data: { session } } = await supabase.auth.getSession();
         
@@ -71,23 +52,12 @@ function createUserStore() {
             ...s,
             userId: session.user.id,
             isAuthenticated: true,
-            sessionId: getOrCreateSessionId(),
           }));
           
-          // Load user data
           await this.loadUserData();
-        } else {
-          update(s => ({
-            ...s,
-            sessionId: getOrCreateSessionId(),
-          }));
         }
       } catch (error) {
         console.error('Failed to initialize user:', error);
-        update(s => ({
-          ...s,
-          sessionId: getOrCreateSessionId(),
-        }));
       }
     },
 
@@ -95,16 +65,12 @@ function createUserStore() {
      * Load user preferences and vote history
      */
     async loadUserData() {
-      if (!isSupabaseConfigured) return;
+      if (!isSupabaseConfigured || !browser) return;
       
       update(s => ({ ...s, loading: true }));
 
       try {
-        const supabase = getSupabase();
-        const state = initialState;
-        
-        // Get session ID votes (works for anonymous users too)
-        const sessionId = getOrCreateSessionId();
+        const sessionId = getSessionId();
         
         const { data: votes, error: votesError } = await supabase
           .from('votes')
@@ -140,8 +106,6 @@ function createUserStore() {
         return { error: 'Supabase not configured' };
       }
 
-      const supabase = getSupabase();
-      
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -174,8 +138,6 @@ function createUserStore() {
         return { error: 'Supabase not configured' };
       }
 
-      const supabase = getSupabase();
-      
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -195,12 +157,11 @@ function createUserStore() {
     async signOut() {
       if (!isSupabaseConfigured) return;
       
-      const supabase = getSupabase();
       await supabase.auth.signOut();
       
       set({
         ...initialState,
-        sessionId: getOrCreateSessionId(),
+        sessionId: browser ? getSessionId() : '',
       });
     },
 
@@ -208,7 +169,7 @@ function createUserStore() {
      * Get current session ID
      */
     getSessionId(): string {
-      return getOrCreateSessionId();
+      return browser ? getSessionId() : '';
     },
 
     /**

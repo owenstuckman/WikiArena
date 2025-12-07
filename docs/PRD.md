@@ -184,6 +184,41 @@ BlendConfig
 └── created_at (timestamp)
 ```
 
+---
+
+## Milestones & Roadmap
+
+### Phase 1: MVP (Weeks 1-3)
+- [ ] Basic arena UI with side-by-side comparison
+- [ ] Wikipedia + Grokipedia integration
+- [ ] Glicko-2 rating system
+- [ ] Simple global leaderboard
+- [ ] Anonymous voting (session-based)
+
+### Phase 2: User Accounts (Weeks 4-5)
+- [ ] Supabase Auth integration
+- [ ] Personal voting history
+- [ ] Personal preference tracking
+- [ ] User dashboard
+
+### Phase 3: Knowledge Blender (Weeks 6-7)
+- [ ] Grok API integration for blending
+- [ ] Custom blend configurations
+- [ ] Format prompt system
+- [ ] Blend history
+
+### Phase 4: Truth Seeker (Weeks 8-9)
+- [ ] Claim extraction
+- [ ] Cross-source verification
+- [ ] Accuracy scoring
+- [ ] Contradiction highlighting
+
+### Phase 5: Polish & Scale (Weeks 10-12)
+- [ ] Additional knowledge sources
+- [ ] Category-based ratings
+- [ ] Performance optimization
+- [ ] Mobile responsiveness
+- [ ] Public API
 
 ---
 

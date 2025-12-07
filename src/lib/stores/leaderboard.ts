@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store';
-import { getSupabase, isSupabaseConfigured } from '$lib/services/supabase';
+import { browser } from '$app/environment';
+import { supabase, isSupabaseConfigured } from '$lib/supabaseClient';
 import { getDemoLeaderboard } from '$lib/services/demo';
 import type { LeaderboardEntry, Source } from '$lib/types/database';
 
@@ -28,7 +29,7 @@ const initialState: LeaderboardState = {
 function createLeaderboardStore() {
   const { subscribe, set, update } = writable<LeaderboardState>(initialState);
 
-  let realtimeSubscription: ReturnType<ReturnType<typeof getSupabase>['channel']> | null = null;
+  let realtimeSubscription: any = null;
 
   return {
     subscribe,
@@ -40,9 +41,9 @@ function createLeaderboardStore() {
       update(s => ({ ...s, loading: true, error: null }));
 
       try {
-        // Use demo data if Supabase not configured
-        if (!isSupabaseConfigured) {
-          await new Promise(resolve => setTimeout(resolve, 300)); // Simulate delay
+        // Use demo data if Supabase not configured or not in browser
+        if (!isSupabaseConfigured || !browser) {
+          await new Promise(resolve => setTimeout(resolve, 300));
           update(s => ({
             ...s,
             entries: getDemoLeaderboard(),
@@ -51,8 +52,6 @@ function createLeaderboardStore() {
           }));
           return;
         }
-
-        const supabase = getSupabase();
 
         // Use the database function for leaderboard
         const { data, error } = await supabase.rpc('get_leaderboard');
@@ -81,9 +80,7 @@ function createLeaderboardStore() {
      * Subscribe to real-time leaderboard updates
      */
     subscribeRealtime() {
-      if (!isSupabaseConfigured) return;
-      
-      const supabase = getSupabase();
+      if (!isSupabaseConfigured || !browser) return;
 
       // Clean up existing subscription
       if (realtimeSubscription) {
@@ -99,8 +96,7 @@ function createLeaderboardStore() {
             schema: 'public',
             table: 'sources',
           },
-          (payload) => {
-            // Update the specific entry
+          (payload: any) => {
             update(s => {
               const updatedSource = payload.new as Source;
               const entries = s.entries.map(entry => {
@@ -121,7 +117,6 @@ function createLeaderboardStore() {
                 return entry;
               });
 
-              // Re-sort by rating
               entries.sort((a, b) => b.rating - a.rating);
 
               return {
@@ -185,8 +180,6 @@ export async function getHeadToHead(sourceAId: string, sourceBId: string) {
   if (!isSupabaseConfigured) {
     return { winsA: 0, winsB: 0, ties: 0, total: 0 };
   }
-  
-  const supabase = getSupabase();
 
   const { data: matches, error } = await supabase
     .from('votes')

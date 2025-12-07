@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { supabase, isSupabaseConfigured } from '$lib/supabaseClient';
   import { userStore, totalUserVotes } from '$lib/stores/user';
-  import { getSupabase, isSupabaseConfigured } from '$lib/services/supabase';
+  import { DEMO_SOURCES } from '$lib/services/demo';
   import type { Source } from '$lib/types/database';
 
   let sources: Source[] = [];
@@ -16,18 +17,23 @@
   });
 
   async function loadSourceStats() {
-    if (!isSupabaseConfigured) return;
-    
-    const supabase = getSupabase();
-    
-    // Load sources
-    const { data: sourcesData } = await supabase
-      .from('sources')
-      .select('*')
-      .eq('is_active', true);
-    
-    if (sourcesData) {
-      sources = sourcesData;
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data: sourcesData } = await supabase
+          .from('sources')
+          .select('*')
+          .eq('is_active', true);
+        
+        if (sourcesData && sourcesData.length > 0) {
+          sources = sourcesData;
+        } else {
+          sources = DEMO_SOURCES;
+        }
+      } catch {
+        sources = DEMO_SOURCES;
+      }
+    } else {
+      sources = DEMO_SOURCES;
     }
 
     // Calculate stats from vote history
@@ -35,12 +41,6 @@
     
     for (const source of sources) {
       stats[source.id] = { wins: 0, losses: 0, ties: 0 };
-    }
-
-    // Process votes to calculate per-source preferences
-    for (const vote of $userStore.voteHistory) {
-      // We'd need match data to properly attribute this
-      // For now, this is a placeholder
     }
 
     sourceStats = stats;

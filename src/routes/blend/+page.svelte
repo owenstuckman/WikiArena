@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getSupabase } from '$lib/services/supabase';
+  import { supabase, isSupabaseConfigured } from '$lib/supabaseClient';
   import type { Source } from '$lib/types/database';
 
   let sources: Source[] = [];
@@ -21,7 +21,18 @@
   ];
 
   onMount(async () => {
-    const supabase = getSupabase();
+    if (!isSupabaseConfigured) {
+      // Use demo sources
+      sources = [
+        { id: '1', name: 'Wikipedia', slug: 'wikipedia', description: 'Encyclopedia', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
+        { id: '2', name: 'Grokipedia', slug: 'grokipedia', description: 'AI Knowledge', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' }
+      ];
+      sources.forEach(s => {
+        weights[s.id] = 1 / sources.length;
+      });
+      return;
+    }
+    
     const { data } = await supabase
       .from('sources')
       .select('*')
@@ -29,7 +40,6 @@
     
     if (data) {
       sources = data;
-      // Initialize weights equally
       sources.forEach(s => {
         weights[s.id] = 1 / sources.length;
       });

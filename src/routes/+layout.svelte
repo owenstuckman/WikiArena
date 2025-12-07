@@ -2,7 +2,7 @@
   import '../app.css';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
-  import { isSupabaseConfigured } from '$lib/services/supabase';
+  import { isSupabaseConfigured } from '$lib/supabaseClient';
   import { userStore } from '$lib/stores/user';
   
   let mounted = false;

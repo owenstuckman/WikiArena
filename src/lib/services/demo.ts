@@ -148,16 +148,40 @@ export function getDemoContent(topicSlug: string, sourceSlug: string): string {
     return topicContent[sourceSlug];
   }
   
-  // Fallback content
+  // Find topic title
+  const topic = DEMO_TOPICS.find(t => t.slug === topicSlug);
+  const topicTitle = topic?.title || topicSlug.replace(/-/g, ' ');
+  
+  // Find source name
   const source = DEMO_SOURCES.find(s => s.slug === sourceSlug);
-  return `This is demo content about "${topicSlug}" from ${source?.name || sourceSlug}. 
+  const sourceName = source?.name || sourceSlug;
+  
+  // Generate fallback content based on source type
+  if (sourceSlug === 'wikipedia') {
+    return `**${topicTitle}** is a topic of significant interest and research. This article provides an overview based on encyclopedic knowledge.
 
-In a production environment with Supabase configured, this would be fetched from the actual ${source?.name || 'source'} API.
+This is placeholder content for "${topicTitle}" from Wikipedia. In production with Supabase configured, real Wikipedia content would be fetched via the MediaWiki API.
 
-To see real data:
-1. Create a .env file with your Supabase credentials
-2. Run the database migration
-3. Restart the development server`;
+The topic encompasses various aspects and has been studied extensively by researchers and practitioners in the field. For more detailed information, please configure your Supabase connection to enable live Wikipedia integration.`;
+  } else if (sourceSlug === 'grokipedia') {
+    return `**${topicTitle}: An AI Perspective**
+
+Let me break down ${topicTitle} for you in a way that's both informative and accessible.
+
+This is simulated Grokipedia content about "${topicTitle}". In a production environment with an xAI API key configured, this would be real-time AI-generated content from Grok.
+
+Key aspects worth understanding:
+• The fundamental concepts and their practical applications
+• Current developments and future implications  
+• How this connects to broader fields of knowledge
+
+Configure your environment variables to enable live AI-powered content generation.`;
+  }
+  
+  // Generic fallback
+  return `Content about "${topicTitle}" from ${sourceName}. 
+
+This is demo placeholder content. Configure Supabase and API keys to see real content from knowledge sources.`;
 }
 
 /**

@@ -16,6 +16,13 @@ export interface WikipediaArticle {
   fullContent?: string;
   url: string;
   thumbnail?: string;
+  sections?: WikipediaSection[];
+}
+
+export interface WikipediaSection {
+  title: string;
+  content: string;
+  level: number;
 }
 
 /**
@@ -42,39 +49,87 @@ export async function fetchWikipediaSummary(title: string): Promise<WikipediaArt
 }
 
 /**
- * Fetch full Wikipedia article content (HTML)
+ * Fetch full Wikipedia article content using TextExtracts API
+ * This provides cleaner, plaintext content with proper formatting
  */
 export async function fetchWikipediaFullArticle(title: string): Promise<WikipediaArticle | null> {
   try {
-    const encoded = encodeURIComponent(title.replace(/ /g, '_'));
+    const encoded = encodeURIComponent(title);
     
-    // Get the full HTML content
-    const htmlResponse = await fetch(`${WIKIPEDIA_API}/page/html/${encoded}`);
+    // Use the TextExtracts API for cleaner content
+    const params = new URLSearchParams({
+      action: 'query',
+      titles: title,
+      prop: 'extracts|pageimages|info',
+      exintro: '0', // Get full article, not just intro
+      explaintext: '1', // Get plaintext
+      exsectionformat: 'wiki', // Include section headers
+      exchars: '15000', // Get up to 15000 chars
+      piprop: 'thumbnail',
+      pithumbsize: '400',
+      inprop: 'url',
+      format: 'json',
+      origin: '*',
+    });
     
-    if (!htmlResponse.ok) {
-      // Fall back to summary
+    const response = await fetch(`${WIKIPEDIA_ACTION_API}?${params}`);
+    
+    if (!response.ok) {
       return fetchWikipediaSummary(title);
     }
     
-    const html = await htmlResponse.text();
+    const data = await response.json();
+    const pages = data.query?.pages;
     
-    // Also get summary for metadata
-    const summary = await fetchWikipediaSummary(title);
+    if (!pages) {
+      return fetchWikipediaSummary(title);
+    }
     
-    // Parse HTML to plain text (simplified)
-    const plainText = htmlToPlainText(html);
+    // Get the first (and usually only) page
+    const pageId = Object.keys(pages)[0];
+    const page = pages[pageId];
+    
+    if (pageId === '-1' || !page.extract) {
+      return fetchWikipediaSummary(title);
+    }
+    
+    // Format the content with proper markdown
+    const formattedContent = formatWikipediaContent(page.title, page.extract);
     
     return {
-      title: summary?.title || title,
-      extract: summary?.extract || '',
-      fullContent: plainText,
-      url: summary?.url || `https://en.wikipedia.org/wiki/${encoded}`,
-      thumbnail: summary?.thumbnail,
+      title: page.title,
+      extract: page.extract.substring(0, 500),
+      fullContent: formattedContent,
+      url: page.fullurl || `https://en.wikipedia.org/wiki/${encoded}`,
+      thumbnail: page.thumbnail?.source,
     };
   } catch (e) {
     console.error('Wikipedia full article error:', e);
     return fetchWikipediaSummary(title);
   }
+}
+
+/**
+ * Format Wikipedia plaintext content into proper markdown
+ */
+function formatWikipediaContent(title: string, extract: string): string {
+  let content = extract;
+  
+  // Convert section headers (Wikipedia returns them as "== Title ==")
+  content = content.replace(/^====\s*(.+?)\s*====$/gm, '#### $1');
+  content = content.replace(/^===\s*(.+?)\s*===$/gm, '### $1');
+  content = content.replace(/^==\s*(.+?)\s*==$/gm, '## $1');
+  
+  // Add the title as H1
+  content = `# ${title}\n\n${content}`;
+  
+  // Clean up excessive newlines
+  content = content.replace(/\n{4,}/g, '\n\n\n');
+  
+  // Ensure paragraphs are separated properly
+  content = content.replace(/\n\n/g, '\n\n');
+  
+  return content.trim();
 }
 
 /**
@@ -164,14 +219,17 @@ export async function fetchGrokipediaContent(
         messages: [
           {
             role: 'system',
-            content: `You are Grokipedia, an AI-powered encyclopedia. Provide a comprehensive, factual, and well-structured article about the given topic. Include:
-- An introduction explaining what the topic is
+            content: `You are Grokipedia, an AI-powered encyclopedia. Write a comprehensive, factual, well-structured article about the given topic using markdown formatting.
+
+Structure your response with:
+- A title as # heading
+- An introduction paragraph
+- Multiple ## sections covering different aspects
 - Key facts and information
 - Historical context if relevant
 - Current developments or applications
-- Interesting facts or lesser-known information
 
-Write in an encyclopedic style but make it engaging and accessible. Use clear paragraphs without markdown headers.`
+Write in an engaging, encyclopedic style. Use proper markdown formatting including headers, bold, italic, and bullet points where appropriate.`
           },
           {
             role: 'user',
@@ -179,7 +237,7 @@ Write in an encyclopedic style but make it engaging and accessible. Use clear pa
           }
         ],
         temperature: 0.3,
-        max_tokens: 1500,
+        max_tokens: 2000,
       }),
     });
 
@@ -211,18 +269,33 @@ Write in an encyclopedic style but make it engaging and accessible. Use clear pa
 }
 
 function generateGrokipediaDemoContent(topic: string): string {
-  return `**${topic}**
+  return `# ${topic}
 
 ${topic} is a fascinating subject that encompasses various aspects of human knowledge and understanding. This AI-generated article provides an overview of the key concepts and information related to this topic.
 
+## Overview
+
 The study and understanding of ${topic} has evolved significantly over time, with contributions from numerous researchers, experts, and practitioners across different fields. Today, it remains an important area of interest for academics, professionals, and curious minds alike.
 
-Key aspects of ${topic} include its fundamental principles, practical applications, and ongoing developments in the field. Understanding these elements provides a solid foundation for deeper exploration of the subject.
+## Key Concepts
+
+Key aspects of ${topic} include:
+
+- **Fundamental principles** - The core ideas that form the foundation of understanding
+- **Practical applications** - How this knowledge is applied in real-world scenarios
+- **Ongoing developments** - Current research and emerging trends in the field
+
+Understanding these elements provides a solid foundation for deeper exploration of the subject.
+
+## Recent Developments
 
 In recent years, ${topic} has gained increased attention due to technological advancements and changing societal needs. This has led to new research directions, innovative applications, and broader public awareness.
 
+## Further Reading
+
 For those interested in learning more about ${topic}, there are numerous resources available including academic papers, books, online courses, and expert communities dedicated to advancing knowledge in this area.
 
+---
 *Note: This is demo content. Configure your xAI API key to get real AI-generated encyclopedia articles from Grokipedia.*`;
 }
 
@@ -254,18 +327,39 @@ export async function fetchBritannicaContent(topic: string): Promise<BritannicaA
 }
 
 function generateBritannicaDemoContent(topic: string): string {
-  return `**${topic}**
+  return `# ${topic}
 
-Encyclopedia Britannica has been the gold standard of reference works since 1768, providing accurate, expert-written content on millions of topics.
+**Encyclopedia Britannica** has been the gold standard of reference works since 1768, providing accurate, expert-written content on millions of topics.
+
+## Introduction
 
 ${topic} represents an important area of human knowledge that has been extensively documented and studied by scholars and experts worldwide. The Encyclopedia Britannica's coverage of this topic draws upon centuries of accumulated knowledge and the expertise of leading authorities in the field.
 
+## Historical Background
+
 The historical development of ${topic} can be traced through multiple periods, each contributing unique insights and advancements to our current understanding. From early observations and theories to modern scientific and scholarly investigations, the evolution of knowledge in this area demonstrates humanity's persistent quest for understanding.
 
-Contemporary perspectives on ${topic} reflect both traditional scholarship and cutting-edge research. Experts continue to refine our understanding through rigorous investigation, peer review, and academic discourse.
+## Contemporary Perspectives
 
-The practical applications and implications of ${topic} extend across various domains, influencing education, policy, technology, and everyday life. Understanding these connections helps illuminate the broader significance of this subject.
+Contemporary perspectives on ${topic} reflect both traditional scholarship and cutting-edge research. Experts continue to refine our understanding through:
 
+- Rigorous investigation and experimentation
+- Peer review and academic discourse
+- Integration of new technologies and methodologies
+- Cross-disciplinary collaboration
+
+## Significance and Applications
+
+The practical applications and implications of ${topic} extend across various domains, influencing:
+
+- **Education** - How we teach and learn about this subject
+- **Policy** - Decisions made by governments and organizations
+- **Technology** - Innovations inspired by this knowledge
+- **Daily life** - How this affects ordinary people
+
+Understanding these connections helps illuminate the broader significance of this subject.
+
+---
 *Note: This is demo content representing Britannica's encyclopedic style. In production, this would contain actual licensed Britannica content.*`;
 }
 
@@ -351,45 +445,6 @@ export async function fetchContentFromAllSources(
 // ============================================
 // UTILITIES
 // ============================================
-
-/**
- * Convert HTML to plain text (simplified)
- */
-function htmlToPlainText(html: string): string {
-  // Remove script and style tags
-  let text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
-  text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-  
-  // Remove HTML tags but keep line breaks for block elements
-  text = text.replace(/<\/p>/gi, '\n\n');
-  text = text.replace(/<\/div>/gi, '\n');
-  text = text.replace(/<\/h[1-6]>/gi, '\n\n');
-  text = text.replace(/<br\s*\/?>/gi, '\n');
-  text = text.replace(/<li>/gi, '• ');
-  text = text.replace(/<\/li>/gi, '\n');
-  
-  // Remove remaining HTML tags
-  text = text.replace(/<[^>]+>/g, '');
-  
-  // Decode HTML entities
-  text = text.replace(/&nbsp;/g, ' ');
-  text = text.replace(/&amp;/g, '&');
-  text = text.replace(/&lt;/g, '<');
-  text = text.replace(/&gt;/g, '>');
-  text = text.replace(/&quot;/g, '"');
-  text = text.replace(/&#39;/g, "'");
-  
-  // Clean up whitespace
-  text = text.replace(/\n\s*\n\s*\n/g, '\n\n');
-  text = text.trim();
-  
-  // Limit length
-  if (text.length > 5000) {
-    text = text.substring(0, 5000) + '...';
-  }
-  
-  return text;
-}
 
 /**
  * Get source emoji

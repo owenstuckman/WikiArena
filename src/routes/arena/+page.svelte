@@ -4,6 +4,7 @@
   import { supabase, isSupabaseConfigured, getSessionId } from '$lib/supabaseClient';
   import { authStore, isAuthenticated, currentUser } from '$lib/stores/auth';
   import AuthModal from '$lib/components/AuthModal.svelte';
+  import Markdown from '$lib/components/Markdown.svelte';
   import { 
     searchWikipedia, 
     fetchContentFromSource, 
@@ -48,6 +49,9 @@
   let voteStartTime = 0;
   let showAuthModal = false;
   let contentExpanded = { left: false, right: false };
+
+  // Content truncation settings
+  const TRUNCATE_LENGTH = 2000; // Show first 2000 chars by default
 
   // Search debounce
   let searchTimeout: ReturnType<typeof setTimeout>;
@@ -251,9 +255,22 @@
     return rounded >= 0 ? `+${rounded}` : `${rounded}`;
   }
 
-  function truncateContent(content: string, maxLength = 800): string {
-    if (content.length <= maxLength) return content;
-    return content.substring(0, maxLength) + '...';
+  function getDisplayContent(content: string, expanded: boolean): string {
+    if (expanded || content.length <= TRUNCATE_LENGTH) {
+      return content;
+    }
+    // Find a good break point (end of paragraph or sentence)
+    let truncated = content.substring(0, TRUNCATE_LENGTH);
+    const lastParagraph = truncated.lastIndexOf('\n\n');
+    const lastSentence = truncated.lastIndexOf('. ');
+    
+    if (lastParagraph > TRUNCATE_LENGTH * 0.7) {
+      truncated = content.substring(0, lastParagraph);
+    } else if (lastSentence > TRUNCATE_LENGTH * 0.7) {
+      truncated = content.substring(0, lastSentence + 1);
+    }
+    
+    return truncated + '\n\n...';
   }
 
   function startNewComparison() {
@@ -371,7 +388,7 @@
 
   <!-- Loading Phase -->
   {:else if phase === 'loading'}
-    <div class="max-w-4xl mx-auto">
+    <div class="max-w-6xl mx-auto">
       <div class="text-center mb-8">
         <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-800/50 border border-slate-700/50">
           <span class="text-amber-500">📚</span>
@@ -389,6 +406,8 @@
               <div class="h-4 w-3/4 bg-slate-800 rounded"></div>
               <div class="h-4 w-full bg-slate-800 rounded"></div>
               <div class="h-4 w-5/6 bg-slate-800 rounded"></div>
+              <div class="h-4 w-full bg-slate-800 rounded"></div>
+              <div class="h-4 w-2/3 bg-slate-800 rounded"></div>
             </div>
           </div>
         {/each}
@@ -413,55 +432,47 @@
       <!-- Content Cards -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- Left Source -->
-        <div class="arena-card">
-          <div class="flex items-center justify-between mb-4">
+        <div class="arena-card flex flex-col">
+          <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-700/50">
             <span class="text-lg font-semibold text-blue-400">Source A</span>
             <span class="text-2xl">{getEmoji(leftDisplay.source.slug)}</span>
           </div>
           
-          <div class="prose prose-invert prose-sm max-w-none">
-            <div class="text-slate-300 whitespace-pre-wrap leading-relaxed">
-              {#if contentExpanded.left}
-                {leftDisplay.content.content}
-              {:else}
-                {truncateContent(leftDisplay.content.content)}
-              {/if}
-            </div>
+          <div class="flex-1 overflow-y-auto max-h-[60vh] scrollbar-thin">
+            <Markdown 
+              content={getDisplayContent(leftDisplay.content.content, contentExpanded.left)} 
+            />
           </div>
           
-          {#if leftDisplay.content.content.length > 800}
+          {#if leftDisplay.content.content.length > TRUNCATE_LENGTH}
             <button
-              class="mt-4 text-sm text-amber-400 hover:text-amber-300"
+              class="mt-4 pt-3 border-t border-slate-700/50 text-sm text-amber-400 hover:text-amber-300 text-center w-full"
               on:click={() => contentExpanded.left = !contentExpanded.left}
             >
-              {contentExpanded.left ? 'Show less' : 'Show more'}
+              {contentExpanded.left ? '↑ Show less' : '↓ Show more'}
             </button>
           {/if}
         </div>
 
         <!-- Right Source -->
-        <div class="arena-card">
-          <div class="flex items-center justify-between mb-4">
+        <div class="arena-card flex flex-col">
+          <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-700/50">
             <span class="text-lg font-semibold text-purple-400">Source B</span>
             <span class="text-2xl">{getEmoji(rightDisplay.source.slug)}</span>
           </div>
           
-          <div class="prose prose-invert prose-sm max-w-none">
-            <div class="text-slate-300 whitespace-pre-wrap leading-relaxed">
-              {#if contentExpanded.right}
-                {rightDisplay.content.content}
-              {:else}
-                {truncateContent(rightDisplay.content.content)}
-              {/if}
-            </div>
+          <div class="flex-1 overflow-y-auto max-h-[60vh] scrollbar-thin">
+            <Markdown 
+              content={getDisplayContent(rightDisplay.content.content, contentExpanded.right)} 
+            />
           </div>
           
-          {#if rightDisplay.content.content.length > 800}
+          {#if rightDisplay.content.content.length > TRUNCATE_LENGTH}
             <button
-              class="mt-4 text-sm text-amber-400 hover:text-amber-300"
+              class="mt-4 pt-3 border-t border-slate-700/50 text-sm text-amber-400 hover:text-amber-300 text-center w-full"
               on:click={() => contentExpanded.right = !contentExpanded.right}
             >
-              {contentExpanded.right ? 'Show less' : 'Show more'}
+              {contentExpanded.right ? '↑ Show less' : '↓ Show more'}
             </button>
           {/if}
         </div>
@@ -626,9 +637,3 @@
     </div>
   {/if}
 </div>
-
-<style>
-  .prose p {
-    margin: 0;
-  }
-</style>

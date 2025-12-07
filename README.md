@@ -2,18 +2,21 @@
 
 > Compare knowledge sources head-to-head. Vote for your preferred information style. Shape the global leaderboard.
 
-Knowledge Arena is a crowdsourced evaluation platform that allows users to compare and rate knowledge sources (Wikipedia, Grokipedia, and others) through blind side-by-side comparisons using the **Glicko-2 rating system**.
+Knowledge Arena is a crowdsourced evaluation platform that allows users to compare and rate knowledge sources (Wikipedia, Grokipedia, Encyclopedia Britannica, and others) through blind side-by-side comparisons using the **Glicko-2 rating system**.
 
 ![Knowledge Arena](https://img.shields.io/badge/Stack-Svelte%20%2B%20Supabase-orange?style=for-the-badge)
+![Deploy](https://img.shields.io/badge/Deploy-Vercel-black?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
 
 ## ✨ Features
 
 - **⚔️ Arena Comparisons** - Compare two knowledge sources side-by-side on the same topic
 - **🏆 Global Leaderboard** - Real-time rankings using Glicko-2 rating system
-- **📊 Personal Preferences** - Track your voting patterns and source preferences
+- **📊 Vote History** - Track your voting patterns and source preferences
 - **🧪 Knowledge Blender** - Combine sources based on your preferences (powered by Grok)
-- **🔍 Truth Seeker** - Cross-reference facts across sources (coming soon)
+- **🔐 Authentication** - Sign in to save your voting history across devices
+- **📱 Responsive Design** - Works on desktop and mobile
+- **✨ Markdown Rendering** - Beautiful formatting of encyclopedia content
 
 ## 🛠️ Tech Stack
 
@@ -22,6 +25,8 @@ Knowledge Arena is a crowdsourced evaluation platform that allows users to compa
 - **Backend**: [Supabase](https://supabase.com/) (PostgreSQL, Auth, Edge Functions, Realtime)
 - **Rating System**: [Glicko-2](http://www.glicko.net/glicko/glicko2.pdf)
 - **AI Integration**: [xAI Grok API](https://docs.x.ai/)
+- **Deployment**: [Vercel](https://vercel.com/)
+- **Markdown**: [Marked](https://marked.js.org/)
 
 ## 🚀 Quick Start
 
@@ -29,7 +34,7 @@ Knowledge Arena is a crowdsourced evaluation platform that allows users to compa
 
 - Node.js 18+
 - npm or pnpm
-- Supabase CLI
+- Supabase CLI (optional, for local development)
 - Supabase account
 
 ### Installation
@@ -76,6 +81,50 @@ Knowledge Arena is a crowdsourced evaluation platform that allows users to compa
 
 6. **Open your browser**
    Navigate to `http://localhost:5173`
+
+## 🚀 Deploy to Vercel
+
+### One-Click Deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/knowledge-arena)
+
+### Manual Deploy
+
+1. **Push to GitHub**
+   ```bash
+   git init
+   git add .
+   git commit -m "Initial commit"
+   git remote add origin https://github.com/yourusername/knowledge-arena.git
+   git push -u origin main
+   ```
+
+2. **Import to Vercel**
+   - Go to [vercel.com/new](https://vercel.com/new)
+   - Import your GitHub repository
+   - Vercel will auto-detect SvelteKit
+
+3. **Configure Environment Variables**
+   In Vercel dashboard, add:
+   - `PUBLIC_SUPABASE_URL`
+   - `PUBLIC_SUPABASE_ANON_KEY`
+   - `XAI_API_KEY` (optional)
+
+4. **Deploy**
+   Click "Deploy" and Vercel will build and deploy your app!
+
+### Vercel CLI Deploy
+
+```bash
+# Install Vercel CLI
+npm i -g vercel
+
+# Deploy
+vercel
+
+# Deploy to production
+vercel --prod
+```
 
 ## 📁 Project Structure
 

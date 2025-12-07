@@ -11,6 +11,7 @@ Concept is https://lmarena.ai/leaderboard, but applied to grokipedia/wikipedia t
 	- could be like an engine powered by grok that blends together sources to give information in the preferred manner 
 	- also means a prompt could be provided for exact formatting and whatnot
 - Also could truth seek on them to find which is the most accurate / true.
+
 # Knowledge Sources
 - Wikipedia 
 - Grokipedia 

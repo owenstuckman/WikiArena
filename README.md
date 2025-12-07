@@ -1,29 +1,188 @@
-# Overview
+# 📚 Knowledge Arena
 
-Concept is https://lmarena.ai/leaderboard, but applied to grokipedia/wikipedia to find which is better. 
+> Compare knowledge sources head-to-head. Vote for your preferred information style. Shape the global leaderboard.
 
-# Features
+Knowledge Arena is a crowdsourced evaluation platform that allows users to compare and rate knowledge sources (Wikipedia, Grokipedia, and others) through blind side-by-side comparisons using the **Glicko-2 rating system**.
 
-- users select preferences between knowledge sources
-- global leaderboards
-- personal preferences based off of the selections on knowledge sources 
-- blend together knowledge sources to generate user preferred formatting using grok
-	- could be like an engine powered by grok that blends together sources to give information in the preferred manner 
-	- also means a prompt could be provided for exact formatting and whatnot
-- Also could truth seek on them to find which is the most accurate / true.
+![Knowledge Arena](https://img.shields.io/badge/Stack-Svelte%20%2B%20Supabase-orange?style=for-the-badge)
+![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
 
-# Knowledge Sources
-- Wikipedia 
-- Grokipedia 
-- Encyclopedia Britannica 
-- Grok / other LLMs
-- Wolfram alpha?
+## ✨ Features
 
-# Plan 
+- **⚔️ Arena Comparisons** - Compare two knowledge sources side-by-side on the same topic
+- **🏆 Global Leaderboard** - Real-time rankings using Glicko-2 rating system
+- **📊 Personal Preferences** - Track your voting patterns and source preferences
+- **🧪 Knowledge Blender** - Combine sources based on your preferences (powered by Grok)
+- **🔍 Truth Seeker** - Cross-reference facts across sources (coming soon)
 
-- Plan until 7pm 
-- Setup workspace in the meantime 
-- 7-12 pm hardcore product work 
-- if things fail then go help the other guy out 
+## 🛠️ Tech Stack
 
-- Ok so need to build out base, and then blended thing later 
+- **Frontend**: [SvelteKit](https://kit.svelte.dev/) + TypeScript
+- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
+- **Backend**: [Supabase](https://supabase.com/) (PostgreSQL, Auth, Edge Functions, Realtime)
+- **Rating System**: [Glicko-2](http://www.glicko.net/glicko/glicko2.pdf)
+- **AI Integration**: [xAI Grok API](https://docs.x.ai/)
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Node.js 18+
+- npm or pnpm
+- Supabase CLI
+- Supabase account
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/knowledge-arena.git
+   cd knowledge-arena
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Set up Supabase**
+   ```bash
+   # Login to Supabase
+   npx supabase login
+
+   # Link to your project (or create new)
+   npx supabase link --project-ref your-project-ref
+
+   # Push database schema
+   npx supabase db push
+   ```
+
+4. **Configure environment variables**
+   ```bash
+   cp .env.example .env
+   ```
+   
+   Fill in your Supabase credentials:
+   ```env
+   PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+   PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+   XAI_API_KEY=your-xai-api-key  # Optional, for Grokipedia
+   ```
+
+5. **Start the development server**
+   ```bash
+   npm run dev
+   ```
+
+6. **Open your browser**
+   Navigate to `http://localhost:5173`
+
+## 📁 Project Structure
+
+```
+knowledge-arena/
+├── docs/                     # Documentation
+│   ├── PRD.md               # Product Requirements
+│   ├── ARCHITECTURE.md      # Technical Architecture
+│   └── ROADMAP.md           # Development Roadmap
+├── src/
+│   ├── lib/
+│   │   ├── components/      # Svelte components
+│   │   ├── services/        # API services & Glicko-2
+│   │   ├── stores/          # Svelte stores
+│   │   └── types/           # TypeScript types
+│   ├── routes/              # SvelteKit routes
+│   │   ├── arena/           # Arena comparison page
+│   │   ├── leaderboard/     # Rankings page
+│   │   └── blend/           # Knowledge blender page
+│   ├── app.css              # Global styles
+│   └── app.html             # HTML template
+├── supabase/
+│   ├── migrations/          # Database migrations
+│   └── functions/           # Edge Functions
+├── package.json
+└── README.md
+```
+
+## 🎮 How It Works
+
+### Arena Flow
+1. User enters the Arena
+2. System selects a random topic and two knowledge sources
+3. Sources are displayed anonymously (Source A vs Source B)
+4. User reads both explanations and votes for their preference
+5. Sources are revealed with Glicko-2 rating changes
+6. User can continue to next match or view leaderboard
+
+### Glicko-2 Rating System
+- **Rating (μ)**: Skill estimate, starting at 1500
+- **Rating Deviation (φ)**: Uncertainty in rating, starting at 350
+- **Volatility (σ)**: Expected fluctuation, starting at 0.06
+
+The system accounts for:
+- Opponent strength (beating a higher-rated source = more points)
+- Rating confidence (new sources have higher uncertainty)
+- Activity level (inactive sources become less certain over time)
+
+## 🗄️ Database Schema
+
+```sql
+-- Core tables
+sources          -- Knowledge sources (Wikipedia, Grokipedia, etc.)
+topics           -- Topics/queries for comparison
+matches          -- Comparison sessions
+votes            -- User votes on matches
+user_preferences -- Aggregated user preferences
+blend_configs    -- User's blend configurations
+rating_history   -- Historical rating data for charts
+```
+
+See `supabase/migrations/001_initial_schema.sql` for full schema.
+
+## 🔌 API Integration
+
+### Wikipedia
+Uses the [MediaWiki REST API](https://www.mediawiki.org/wiki/API:REST_API) to fetch article summaries.
+
+### Grokipedia (xAI)
+Requires an [xAI API key](https://console.x.ai/). Generates real-time, AI-powered explanations using Grok.
+
+## 📝 Available Scripts
+
+```bash
+npm run dev          # Start development server
+npm run build        # Build for production
+npm run preview      # Preview production build
+npm run check        # Type-check the codebase
+npm run lint         # Lint the codebase
+npm run format       # Format with Prettier
+npm run db:push      # Push database migrations
+npm run db:reset     # Reset database
+npm run db:types     # Generate TypeScript types from schema
+```
+
+## 🤝 Contributing
+
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) first.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📜 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Inspired by [LMSYS Chatbot Arena](https://lmarena.ai/)
+- Glicko-2 algorithm by Mark Glickman
+- Built with Svelte, Supabase, and xAI
+
+---
+
+<p align="center">
+  <strong>Knowledge Arena</strong> — Where knowledge sources compete for truth.
+</p>

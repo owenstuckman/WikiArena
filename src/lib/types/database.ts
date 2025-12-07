@@ -4,6 +4,16 @@
  * npx supabase gen types typescript --local > src/lib/types/database.ts
  */
 
+/**
+ * Database types for Knowledge Arena
+ * 
+ * To regenerate types from your Supabase schema, run:
+ * npx supabase gen types typescript --project-id your-project-ref > src/lib/types/database.ts
+ * 
+ * Or for local development:
+ * npx supabase gen types typescript --local > src/lib/types/database.ts
+ */
+
 export type Json =
   | string
   | number

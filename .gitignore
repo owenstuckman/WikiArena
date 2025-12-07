@@ -1,2 +1,36 @@
-.env.*
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+.pnpm-debug.log
 
+# Svelte / SvelteKit build outputs
+/.svelte-kit
+/build
+/.vercel
+/.netlify
+
+# Supabase
+/supabase/.temp
+/supabase/functions/.netlify
+/supabase/functions/.vercel
+
+# Environment variables
+.env
+.env.*
+.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log

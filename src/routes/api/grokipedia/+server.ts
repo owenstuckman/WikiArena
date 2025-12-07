@@ -1,6 +1,19 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { XAI_API_KEY } from '$env/static/private';
+
+/**
+ * Grokipedia Scraper Route (Selenium-first)
+ *
+ * Why:
+ * - Grokipedia appears JS-heavy. Raw fetch often returns a thin shell.
+ * - Selenium DOM extraction after hydration is more reliable than regex parsing.
+ *
+ * Requirements for Selenium path:
+ *   npm i selenium-webdriver
+ *   A runtime with Chrome/Chromium available (best with adapter-node/VPS/Docker)
+ *
+ * If Selenium/Chrome isn't available, this route will gracefully fall back to fetch scraping.
+ */
 
 const GROKIPEDIA_BASE_URL = 'https://grokipedia.com';
 
@@ -10,315 +23,394 @@ interface GrokipediaResult {
   url: string;
   isFallback: boolean;
   notFound?: boolean;
-  source?: 'scrape' | 'playwright' | 'grok' | 'fallback';
+  source?: 'selenium' | 'scrape' | 'fallback';
+  debug?: {
+    triedUrls: string[];
+    seleniumAvailable: boolean;
+    notes: string[];
+  };
 }
 
 export const GET: RequestHandler = async ({ url }) => {
   const topic = url.searchParams.get('topic');
-  
+  const debugEnabled = url.searchParams.get('debug') === '1';
+
   if (!topic) {
     return json({ error: 'Missing topic parameter' }, { status: 400 });
   }
 
-  // Strategy 1: Try Playwright first (Grokipedia is a JS-heavy site)
-  const playwrightResult = await tryPlaywright(topic);
-  if (playwrightResult) {
-    return json(playwrightResult);
+  const cleanedTopic = topic.trim();
+  const urlPatterns = buildUrlPatterns(cleanedTopic);
+
+  const debugNotes: string[] = [];
+  const debugPayloadBase = {
+    triedUrls: urlPatterns,
+    seleniumAvailable: true,
+    notes: debugNotes
+  };
+
+  // 1) Selenium first
+  const seleniumResult = await trySelenium(cleanedTopic, urlPatterns, debugNotes);
+  if (seleniumResult) {
+    if (debugEnabled) {
+      seleniumResult.debug = debugPayloadBase;
+    }
+    return json(seleniumResult);
   }
 
-  // Strategy 2: Try regular fetch as backup
-  const fetchResult = await tryFetch(topic);
+  // If Selenium failed due to environment, mark it
+  if (debugNotes.some(n => n.toLowerCase().includes('selenium unavailable'))) {
+    debugPayloadBase.seleniumAvailable = false;
+  }
+
+  // 2) Raw fetch fallback
+  const fetchResult = await tryFetch(cleanedTopic, urlPatterns, debugNotes);
   if (fetchResult) {
+    if (debugEnabled) {
+      fetchResult.debug = debugPayloadBase;
+    }
     return json(fetchResult);
   }
 
-  // Strategy 3: Use Grok API to generate content
-  const grokResult = await tryGrokApi(topic);
-  if (grokResult) {
-    return json(grokResult);
-  }
-
-  // No content found
-  const formattedTopic = topic.trim().replace(/\s+/g, '_');
-  return json({
-    title: topic,
+  // 3) Not found fallback
+  const formattedTopic = cleanedTopic.replace(/\s+/g, '_');
+  const fallback: GrokipediaResult = {
+    title: cleanedTopic,
     content: '',
     url: `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(formattedTopic)}`,
     isFallback: true,
     notFound: true,
     source: 'fallback'
-  });
+  };
+
+  if (debugEnabled) {
+    fallback.debug = debugPayloadBase;
+  }
+
+  return json(fallback);
 };
 
-async function tryPlaywright(topic: string): Promise<GrokipediaResult | null> {
+/**
+ * Build URL patterns to maximize hit rate.
+ * Your example: https://grokipedia.com/page/Chinese_language
+ */
+function buildUrlPatterns(topic: string): string[] {
+  const baseSlug = topic.replace(/\s+/g, '_');
+
+  const titleCaseSlug = topic
+    .split(' ')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join('_');
+
+  const lowerSlug = topic.toLowerCase().replace(/\s+/g, '_');
+
+  const slugs = Array.from(new Set([
+    baseSlug,
+    titleCaseSlug,
+    lowerSlug,
+    topic
+  ]));
+
+  return slugs.map(s => `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(s)}`);
+}
+
+/* ------------------------------ SELENIUM ------------------------------ */
+
+async function trySelenium(
+  topic: string,
+  urlPatterns: string[],
+  debugNotes: string[]
+): Promise<GrokipediaResult | null> {
   try {
-    const { chromium } = await import('playwright');
-    
-    const browser = await chromium.launch({ 
-      headless: true,
-      args: [
-        '--no-sandbox', 
-        '--disable-setuid-sandbox', 
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu'
-      ]
-    });
-    
-    let result: GrokipediaResult | null = null;
-    
+    const selenium = await import('selenium-webdriver');
+    const chrome = await import('selenium-webdriver/chrome');
+
+    const { Builder, By } = selenium;
+
+    const options = new chrome.Options();
+    options.addArguments(
+      '--headless=new',
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--window-size=1280,720'
+    );
+
+    // If you ever need a custom Chrome path:
+    // options.setChromeBinaryPath(process.env.CHROME_BIN);
+
+    const driver = await new Builder()
+      .forBrowser('chrome')
+      .setChromeOptions(options)
+      .build();
+
     try {
-      const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        viewport: { width: 1280, height: 720 },
-        javaScriptEnabled: true,
-      });
-      
-      const page = await context.newPage();
-      
-      // Try multiple URL patterns
-      const urlPatterns = [
-        `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(topic.replace(/\s+/g, '_'))}`,
-        `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(topic.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('_'))}`,
-        `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(topic.toLowerCase().replace(/\s+/g, '_'))}`,
-        `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(topic)}`,
-      ];
-      
-      for (const url of urlPatterns) {
+      for (const pageUrl of urlPatterns) {
         try {
-          console.log(`Trying Grokipedia URL: ${url}`);
-          
-          // Navigate with longer timeout for JS-heavy sites
-          await page.goto(url, { 
-            waitUntil: 'domcontentloaded', 
-            timeout: 12000 
-          });
-          
-          // Wait for content to load - try multiple strategies
+          console.log(`Selenium trying: ${pageUrl}`);
+          await driver.get(pageUrl);
+
+          // Hydration buffers for SPA content
+          await driver.sleep(1200);
+
+          // Soft wait for meaningful body text
           try {
-            await page.waitForSelector('article, .article, .content, main, [class*="article"], [class*="content"]', { 
-              timeout: 5000 
-            });
+            await driver.wait(async () => {
+              const body = await driver.findElement(By.css('body'));
+              const txt = await body.getText();
+              return (txt || '').trim().length > 200;
+            }, 7000);
           } catch {
-            // If no selector found, wait a bit for JS to render
-            await page.waitForTimeout(2000);
+            // continue anyway
           }
-          
-          // Additional wait for dynamic content
-          await page.waitForTimeout(1500);
-          
-          // Check if we're on an error page
-          const isError = await page.evaluate(() => {
-            const body = document.body.textContent?.toLowerCase() || '';
-            return body.includes('page not found') || 
-                   body.includes('404') ||
-                   body.includes('does not exist') ||
-                   body.includes('no article found') ||
-                   body.includes('error loading');
-          });
-          
-          if (isError) {
-            console.log(`Grokipedia: Page not found for ${url}`);
-            continue;
-          }
-          
-          // Extract content with multiple strategies
-          const extracted = await page.evaluate((topicName) => {
-            // Remove unwanted elements
-            const unwanted = document.querySelectorAll('nav, footer, header, aside, script, style, [class*="sidebar"], [class*="menu"], [class*="nav"], [class*="footer"], [class*="header"], [class*="ad"], [class*="cookie"], [class*="popup"]');
-            unwanted.forEach(el => el.remove());
-            
-            // Strategy 1: Look for main content containers
-            const contentSelectors = [
-              'article',
-              '[class*="article-content"]',
-              '[class*="wiki-content"]',
-              '[class*="page-content"]',
-              '[class*="entry-content"]',
-              '.content',
-              'main',
-              '[role="main"]',
-              '#content',
-              '#main-content',
-              '.prose',
-              '[class*="markdown"]',
-            ];
-            
-            let contentEl: Element | null = null;
-            for (const selector of contentSelectors) {
-              const el = document.querySelector(selector);
-              if (el && el.textContent && el.textContent.trim().length > 300) {
-                contentEl = el;
-                break;
+
+          // DOM-based extraction after hydration
+          const extracted = await driver.executeScript(
+            function (topicName: string) {
+              try {
+                const killSelectors = [
+                  'nav', 'footer', 'header', 'aside', 'script', 'style',
+                  '[class*="sidebar"]', '[class*="menu"]', '[class*="nav"]',
+                  '[class*="footer"]', '[class*="header"]', '[class*="ad"]',
+                  '[class*="cookie"]', '[class*="popup"]', '[role="navigation"]'
+                ];
+
+                document.querySelectorAll(killSelectors.join(','))
+                  .forEach(el => el.remove());
+
+                const contentSelectors = [
+                  'article',
+                  'main',
+                  '[role="main"]',
+                  '#content',
+                  '#main-content',
+                  '.content',
+                  '.prose',
+                  '[class*="article"]',
+                  '[class*="content"]',
+                  '[class*="markdown"]',
+                  '[class*="prose"]',
+                  '[class*="page"]'
+                ];
+
+                const candidates: Element[] = [];
+
+                for (const sel of contentSelectors) {
+                  document.querySelectorAll(sel).forEach(el => candidates.push(el));
+                }
+
+                document.querySelectorAll('div, section')
+                  .forEach(el => candidates.push(el));
+
+                let best: Element | null = null;
+                let bestLen = 0;
+
+                for (const el of candidates) {
+                  const text = (el.textContent || '').trim();
+                  if (text.length > bestLen && text.length > 200) {
+                    best = el;
+                    bestLen = text.length;
+                  }
+                }
+
+                if (!best) {
+                  best = document.body;
+                }
+
+                const titleEl =
+                  document.querySelector('h1') ||
+                  document.querySelector('title');
+
+                const title = (titleEl?.textContent || '').trim() || topicName;
+
+                const elements = best.querySelectorAll(
+                  'h1, h2, h3, h4, p, li, blockquote'
+                );
+
+                const out: string[] = [];
+
+                elements.forEach(el => {
+                  const t = (el.textContent || '').trim();
+                  if (!t) return;
+                  if (t.length < 12) return;
+
+                  const lower = t.toLowerCase();
+                  if (
+                    lower.includes('sign in') ||
+                    lower.includes('sign up') ||
+                    lower.includes('privacy') ||
+                    lower.includes('terms') ||
+                    lower.includes('cookie')
+                  ) {
+                    return;
+                  }
+
+                  const tag = el.tagName.toLowerCase();
+                  if (tag === 'h1') out.push(`# ${t}`);
+                  else if (tag === 'h2') out.push(`## ${t}`);
+                  else if (tag === 'h3') out.push(`### ${t}`);
+                  else if (tag === 'h4') out.push(`#### ${t}`);
+                  else if (tag === 'li') out.push(`- ${t}`);
+                  else if (tag === 'blockquote') out.push(`> ${t}`);
+                  else out.push(t);
+                });
+
+                let content = out.join('\n\n')
+                  .replace(/\n{3,}/g, '\n\n')
+                  .trim();
+
+                // Structure too thin, fall back to raw text
+                if (content.length < 200) {
+                  const raw = (best.textContent || '').trim();
+                  if (raw.length > 200) {
+                    content = `# ${title}\n\n${raw}`;
+                  }
+                }
+
+                if (!content || content.length < 120) {
+                  return null;
+                }
+
+                if (!content.startsWith('#')) {
+                  content = `# ${title}\n\n${content}`;
+                }
+
+                return { title, content };
+              } catch {
+                return null;
               }
+            },
+            topic
+          ) as { title: string; content: string } | null;
+
+          if (extracted?.content) {
+            const cleaned = extracted.content
+              .replace(/\n{3,}/g, '\n\n')
+              .trim();
+
+            // Sometimes real pages are shorter than you'd think
+            if (cleaned.length > 150) {
+              return {
+                title: extracted.title,
+                content: cleaned,
+                url: pageUrl,
+                isFallback: false,
+                source: 'selenium'
+              };
             }
-            
-            if (!contentEl) {
-              // Fallback: get the largest text container
-              const allDivs = Array.from(document.querySelectorAll('div, section'));
-              let maxLen = 0;
-              for (const div of allDivs) {
-                const text = div.textContent?.trim() || '';
-                if (text.length > maxLen && text.length > 300) {
-                  maxLen = text.length;
-                  contentEl = div;
+          }
+
+          // As a secondary fallback within Selenium, parse the hydrated HTML
+          // This helps if the DOM selection missed but the HTML is now rich.
+          try {
+            const html = await driver.getPageSource();
+            if (html) {
+              const lower = html.toLowerCase();
+              if (
+                !lower.includes('page not found') &&
+                !lower.includes('does not exist') &&
+                !lower.includes('no article found') &&
+                !lower.includes('404')
+              ) {
+                const content = parseHtmlToMarkdown(html, topic);
+                if (content && content.length > 150) {
+                  const titleFromContent =
+                    content.match(/^#\s+(.+)$/m)?.[1]?.trim() || topic;
+
+                  return {
+                    title: titleFromContent,
+                    content,
+                    url: pageUrl,
+                    isFallback: false,
+                    source: 'selenium'
+                  };
                 }
               }
             }
-            
-            if (!contentEl) {
-              return null;
-            }
-            
-            // Get title
-            const titleEl = document.querySelector('h1') || document.querySelector('title');
-            const title = titleEl?.textContent?.trim() || topicName;
-            
-            // Build markdown content
-            const paragraphs: string[] = [];
-            
-            // Get headers and paragraphs
-            const elements = contentEl.querySelectorAll('h1, h2, h3, h4, p, li, blockquote');
-            
-            for (const el of elements) {
-              const text = el.textContent?.trim();
-              if (!text || text.length < 20) continue;
-              
-              // Skip navigation/UI text
-              if (text.includes('Sign in') || text.includes('Sign up') || 
-                  text.includes('Cookie') || text.includes('Privacy') ||
-                  text.includes('Terms of') || text.includes('©')) {
-                continue;
-              }
-              
-              const tagName = el.tagName.toLowerCase();
-              if (tagName === 'h1') {
-                paragraphs.push(`# ${text}`);
-              } else if (tagName === 'h2') {
-                paragraphs.push(`## ${text}`);
-              } else if (tagName === 'h3') {
-                paragraphs.push(`### ${text}`);
-              } else if (tagName === 'h4') {
-                paragraphs.push(`#### ${text}`);
-              } else if (tagName === 'li') {
-                paragraphs.push(`- ${text}`);
-              } else if (tagName === 'blockquote') {
-                paragraphs.push(`> ${text}`);
-              } else {
-                paragraphs.push(text);
-              }
-            }
-            
-            // If no structured content, get raw text
-            if (paragraphs.length < 3) {
-              const rawText = contentEl.textContent?.trim() || '';
-              if (rawText.length > 300) {
-                return {
-                  title,
-                  content: `# ${title}\n\n${rawText}`,
-                };
-              }
-              return null;
-            }
-            
-            return {
-              title,
-              content: paragraphs.join('\n\n'),
-            };
-          }, topic);
-          
-          if (extracted && extracted.content && extracted.content.length > 300) {
-            // Clean up the content
-            let content = extracted.content
-              .replace(/grokipedia/gi, 'this encyclopedia')
-              .replace(/\n{3,}/g, '\n\n')
-              .trim();
-            
-            // Ensure title is present
-            if (!content.startsWith('#')) {
-              content = `# ${extracted.title}\n\n${content}`;
-            }
-            
-            result = {
-              title: extracted.title,
-              content,
-              url,
-              isFallback: false,
-              source: 'playwright'
-            };
-            
-            console.log(`Grokipedia: Successfully extracted ${content.length} chars from ${url}`);
-            break;
+          } catch {
+            // ignore
           }
+
         } catch (e) {
-          console.log(`Grokipedia: Failed to load ${url}:`, e instanceof Error ? e.message : e);
+          console.log(
+            `Selenium failed for ${pageUrl}:`,
+            e instanceof Error ? e.message : e
+          );
           continue;
         }
       }
-      
-      await context.close();
+
+      return null;
     } finally {
-      await browser.close();
+      await driver.quit();
     }
-    
-    return result;
   } catch (e) {
-    console.log('Grokipedia Playwright error:', e instanceof Error ? e.message : e);
+    const msg = `Selenium unavailable (not installed or no Chrome in runtime): ${
+      e instanceof Error ? e.message : String(e)
+    }`;
+    console.log(msg);
+    debugNotes.push(msg);
     return null;
   }
 }
 
-async function tryFetch(topic: string): Promise<GrokipediaResult | null> {
-  const urlPatterns = [
-    `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(topic.replace(/\s+/g, '_'))}`,
-    `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(topic.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('_'))}`,
-    `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(topic.toLowerCase().replace(/\s+/g, '_'))}`,
-  ];
+/* ------------------------------- FETCH -------------------------------- */
 
-  for (const url of urlPatterns) {
+async function tryFetch(
+  topic: string,
+  urlPatterns: string[],
+  debugNotes: string[]
+): Promise<GrokipediaResult | null> {
+  for (const pageUrl of urlPatterns) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
-      
-      const response = await fetch(url, {
+
+      const response = await fetch(pageUrl, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept':
+            'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5'
         },
-        signal: controller.signal,
+        signal: controller.signal
       });
-      
+
       clearTimeout(timeoutId);
 
       if (!response.ok) continue;
 
       const html = await response.text();
-      
-      // Check if page doesn't exist
-      if (html.includes('Page not found') || 
-          html.includes('does not exist') ||
-          html.includes('404') ||
-          html.includes('No article found')) {
+      const lower = html.toLowerCase();
+
+      if (
+        lower.includes('page not found') ||
+        lower.includes('does not exist') ||
+        lower.includes('no article found') ||
+        lower.includes('404')
+      ) {
         continue;
       }
-      
+
       const content = parseHtmlToMarkdown(html, topic);
 
-      if (content && content.length > 300) {
+      if (content && content.length > 150) {
+        const titleFromContent =
+          content.match(/^#\s+(.+)$/m)?.[1]?.trim() || topic;
+
         return {
-          title: topic,
+          title: titleFromContent,
           content,
-          url,
+          url: pageUrl,
           isFallback: false,
           source: 'scrape'
         };
       }
     } catch (e) {
-      console.log(`Grokipedia fetch failed for ${url}:`, e instanceof Error ? e.message : e);
+      const msg = `Fetch failed for ${pageUrl}: ${e instanceof Error ? e.message : String(e)}`;
+      console.log(msg);
+      debugNotes.push(msg);
       continue;
     }
   }
@@ -326,93 +418,26 @@ async function tryFetch(topic: string): Promise<GrokipediaResult | null> {
   return null;
 }
 
-async function tryGrokApi(topic: string): Promise<GrokipediaResult | null> {
-  if (!XAI_API_KEY) {
-    console.log('No XAI_API_KEY configured');
-    return null;
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${XAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'grok-beta',
-        messages: [
-          {
-            role: 'system',
-            content: `You are an expert encyclopedia writer. Write comprehensive, factual, and well-structured encyclopedia-style articles.
-
-Format in Markdown with:
-- A clear introduction
-- Multiple sections with ## headers
-- Factual, neutral tone
-- Key facts, dates, and details
-
-Do NOT mention AI or that content is generated.`
-          },
-          {
-            role: 'user',
-            content: `Write a comprehensive encyclopedia article about: ${topic}`
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 2000,
-      }),
-      signal: controller.signal,
-    });
-    
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      console.log('Grok API error:', response.status);
-      return null;
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-
-    if (content && content.length > 300) {
-      return {
-        title: topic,
-        content: `# ${topic}\n\n${content}`,
-        url: `${GROKIPEDIA_BASE_URL}/page/${encodeURIComponent(topic.replace(/\s+/g, '_'))}`,
-        isFallback: false,
-        source: 'grok'
-      };
-    }
-  } catch (e) {
-    console.log('Grok API failed:', e instanceof Error ? e.message : e);
-  }
-
-  return null;
-}
+/* --------------------------- HTML → MARKDOWN -------------------------- */
 
 function parseHtmlToMarkdown(html: string, topic: string): string {
   let content = html;
-  
-  // Extract main content area
+
   const contentPatterns = [
     /<article[^>]*>([\s\S]*?)<\/article>/i,
     /<main[^>]*>([\s\S]*?)<\/main>/i,
     /<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
     /<div[^>]*class="[^"]*article[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
   ];
-  
+
   for (const pattern of contentPatterns) {
     const match = html.match(pattern);
-    if (match && match[1] && match[1].length > 300) {
+    if (match && match[1] && match[1].length > 150) {
       content = match[1];
       break;
     }
   }
-  
+
   // Remove unwanted elements
   content = content.replace(/<script[\s\S]*?<\/script>/gi, '');
   content = content.replace(/<style[\s\S]*?<\/style>/gi, '');
@@ -422,28 +447,28 @@ function parseHtmlToMarkdown(html: string, topic: string): string {
   content = content.replace(/<aside[\s\S]*?<\/aside>/gi, '');
   content = content.replace(/<form[\s\S]*?<\/form>/gi, '');
   content = content.replace(/<button[\s\S]*?<\/button>/gi, '');
-  
+
   // Convert headers
   content = content.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
   content = content.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n');
   content = content.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n');
   content = content.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '\n#### $1\n');
-  
+
   // Convert paragraphs
   content = content.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n$1\n');
-  
+
   // Convert lists
   content = content.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n');
   content = content.replace(/<\/?[uo]l[^>]*>/gi, '\n');
-  
+
   // Convert formatting
   content = content.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi, '**$2**');
   content = content.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, '*$2*');
   content = content.replace(/<br\s*\/?>/gi, '\n');
-  
+
   // Remove remaining tags
   content = content.replace(/<[^>]+>/g, '');
-  
+
   // Decode entities
   content = content.replace(/&nbsp;/g, ' ');
   content = content.replace(/&amp;/g, '&');
@@ -453,15 +478,13 @@ function parseHtmlToMarkdown(html: string, topic: string): string {
   content = content.replace(/&#39;/g, "'");
   content = content.replace(/&mdash;/g, '—');
   content = content.replace(/&ndash;/g, '–');
-  
-  // Clean up
-  content = content.replace(/grokipedia/gi, 'this encyclopedia');
-  content = content.replace(/\n{3,}/g, '\n\n');
-  content = content.trim();
-  
+
+  // Clean up whitespace
+  content = content.replace(/\n{3,}/g, '\n\n').trim();
+
   if (!content.startsWith('#')) {
     content = `# ${topic}\n\n${content}`;
   }
-  
+
   return content;
 }

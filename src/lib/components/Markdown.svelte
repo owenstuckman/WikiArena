@@ -253,6 +253,9 @@
     color: #f1f5f9;
     border-bottom: 1px solid #334155;
     padding-bottom: 0.5rem;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    hyphens: auto;
   }
   
   .markdown-content :global(h2) {
@@ -261,6 +264,8 @@
     margin-top: 1.5rem;
     margin-bottom: 0.75rem;
     color: #e2e8f0;
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
   
   .markdown-content :global(h3) {
@@ -269,6 +274,8 @@
     margin-top: 1.25rem;
     margin-bottom: 0.5rem;
     color: #cbd5e1;
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
   
   .markdown-content :global(h4) {
@@ -277,12 +284,16 @@
     margin-top: 1rem;
     margin-bottom: 0.5rem;
     color: #94a3b8;
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
   
   .markdown-content :global(p) {
     margin-bottom: 1rem;
     line-height: 1.7;
     color: #cbd5e1;
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
   
   .markdown-content :global(ul),

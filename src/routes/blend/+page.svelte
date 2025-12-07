@@ -376,14 +376,47 @@
   function toggleSource(sourceId: string) {
     enabledSources[sourceId] = !enabledSources[sourceId];
     enabledSources = { ...enabledSources };
-    normalizeWeights();
+    // When toggling, distribute evenly among enabled sources
+    const enabledIds = Object.entries(enabledSources)
+      .filter(([_, enabled]) => enabled)
+      .map(([id]) => id);
+    if (enabledIds.length > 0) {
+      const share = 1 / enabledIds.length;
+      enabledIds.forEach(id => {
+        weights[id] = share;
+      });
+      weights = { ...weights };
+    }
     usePreferenceWeights = false;
   }
 
   function updateWeight(sourceId: string, value: number) {
+    // Just set the weight, don't auto-normalize
     weights[sourceId] = value / 100;
-    normalizeWeights();
+    weights = { ...weights };
     usePreferenceWeights = false;
+  }
+  
+  function getTotalWeight(): number {
+    const enabledIds = Object.entries(enabledSources)
+      .filter(([_, enabled]) => enabled)
+      .map(([id]) => id);
+    return enabledIds.reduce((sum, id) => sum + (weights[id] || 0), 0);
+  }
+  
+  function fixWeightsTo100() {
+    const enabledIds = Object.entries(enabledSources)
+      .filter(([_, enabled]) => enabled)
+      .map(([id]) => id);
+    
+    const total = enabledIds.reduce((sum, id) => sum + (weights[id] || 0), 0);
+    
+    if (total > 0 && total !== 1) {
+      enabledIds.forEach(id => {
+        weights[id] = weights[id] / total;
+      });
+      weights = { ...weights };
+    }
   }
 
   function normalizeWeights() {
@@ -901,6 +934,31 @@ ${truncatedContent}`;
             </div>
           {/each}
         </div>
+        
+        <!-- Total Weight Display -->
+        {@const totalWeight = getTotalWeight()}
+        {@const isValid = Math.abs(totalWeight - 1) < 0.01}
+        <div class="mt-4 pt-4 border-t border-slate-700/30">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-sm text-slate-400">Total:</span>
+              <span class="text-sm font-mono {isValid ? 'text-emerald-400' : 'text-red-400'}">
+                {Math.round(totalWeight * 100)}%
+              </span>
+              {#if !isValid}
+                <span class="text-xs text-red-400">(must equal 100%)</span>
+              {/if}
+            </div>
+            {#if !isValid}
+              <button
+                on:click={fixWeightsTo100}
+                class="px-3 py-1 text-xs bg-amber-500/20 text-amber-400 rounded-lg hover:bg-amber-500/30 transition-colors"
+              >
+                Fix to 100%
+              </button>
+            {/if}
+          </div>
+        </div>
       </div>
 
       <!-- Output Style -->
@@ -1167,24 +1225,26 @@ ${truncatedContent}`;
                 </div>
               {/if}
             
-              <div class="grid grid-cols-1 gap-4" class:md:grid-cols-2={Object.keys(fetchedContents).length === 2} class:md:grid-cols-3={Object.keys(fetchedContents).length >= 3}>
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {#each Object.entries(fetchedContents) as [sourceId, content]}
                   {@const source = sources.find(s => s.id === sourceId)}
                   {@const quality = sourceQualities[sourceId]}
-                  <div class="p-4 rounded-lg bg-slate-800/30 border border-slate-700/30">
+                  <div class="p-4 rounded-lg bg-slate-800/30 border border-slate-700/30 overflow-hidden">
                     <div class="flex items-center gap-2 mb-3 pb-2 border-b border-slate-700/30">
-                      <img src={getLogo(source?.slug || '')} alt="" class="w-5 h-5 object-contain" />
-                      <span class="font-medium text-sm {getColor(source?.slug || '')}">{source?.name || 'Unknown'}</span>
-                      <span class="text-xs text-amber-400 ml-auto">{Math.round(weights[sourceId] * 100)}%</span>
+                      <img src={getLogo(source?.slug || '')} alt="" class="w-5 h-5 object-contain flex-shrink-0" />
+                      <span class="font-medium text-sm {getColor(source?.slug || '')} truncate">{source?.name || 'Unknown'}</span>
+                      <span class="text-xs text-amber-400 ml-auto flex-shrink-0">{Math.round(weights[sourceId] * 100)}%</span>
                     </div>
                     {#if quality}
-                      <div class="flex items-center gap-3 mb-3 text-xs">
+                      <div class="flex items-center gap-3 mb-3 text-xs flex-wrap">
                         <span class="text-slate-500">Quality: <span class="{getQualityTier(quality.overallScore).color}">{formatQualityScore(quality.overallScore)}</span></span>
                         <span class="text-slate-500">Unique: <span class="{quality.shapleyValue >= 0 ? 'text-emerald-400' : 'text-red-400'}">{formatShapleyValue(quality.shapleyValue)}</span></span>
                       </div>
                     {/if}
-                    <div class="text-xs text-slate-400 max-h-48 overflow-y-auto scrollbar-thin">
-                      <Markdown content={content.content.substring(0, 1500) + (content.content.length > 1500 ? '...' : '')} />
+                    <div class="text-xs text-slate-400 max-h-48 overflow-y-auto overflow-x-hidden scrollbar-thin">
+                      <div class="break-words">
+                        <Markdown content={content.content.substring(0, 1500) + (content.content.length > 1500 ? '...' : '')} />
+                      </div>
                     </div>
                   </div>
                 {/each}

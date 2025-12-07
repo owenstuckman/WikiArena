@@ -1142,8 +1142,8 @@ export const SOURCE_LOGOS: Record<SourceSlug, string> = {
   grokipedia: '/logos/grokipedia.png',
   // Britannica thistle logo - local file
   britannica: '/logos/britannica.webp',
-  // Citizendium logo
-  citizendium: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/Citizendium_Logo.svg/200px-Citizendium_Logo.svg.png',
+  // Citizendium logo - local file
+  citizendium: '/logos/citizendium.png',
   // New World Encyclopedia - using a book icon as placeholder
   newworld: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/92/Open_book_nae_02.svg/200px-Open_book_nae_02.svg.png',
 };

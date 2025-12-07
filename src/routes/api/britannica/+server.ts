@@ -15,30 +15,46 @@ interface BritannicaResult {
 
 export const GET: RequestHandler = async ({ url }) => {
   const topic = url.searchParams.get('topic');
-  
+
+  console.log(`\n=== Britannica Lookup Request ===`);
+  console.log(`Topic: "${topic}"`);
+  console.log(`Timestamp: ${new Date().toISOString()}`);
+
   if (!topic) {
     return json({ error: 'Missing topic parameter' }, { status: 400 });
   }
 
-  // Strategy 1: Try regular fetch scraping
+  // Strategy 1 — Fetch scraping
+  console.log("\n[1] Trying direct fetch scraping…");
   const fetchResult = await tryFetch(topic);
   if (fetchResult) {
+    console.log("[1] SUCCESS via fetch:", fetchResult.url);
     return json(fetchResult);
   }
+  console.log("[1] Fetch scraping FAILED");
 
-  // Strategy 2: Try Playwright (if available)
+  // Strategy 2 — Playwright
+  console.log("\n[2] Trying Playwright scraping…");
   const playwrightResult = await tryPlaywright(topic);
   if (playwrightResult) {
+    console.log("[2] SUCCESS via Playwright:", playwrightResult.url);
     return json(playwrightResult);
   }
+  console.log("[2] Playwright scraping FAILED");
 
-  // Strategy 3: Use Grok API to generate Britannica-style content
+  // Strategy 3 — Grok Fallback
+  console.log("\n[3] Using Grok fallback…");
   const grokResult = await tryGrokApi(topic);
   if (grokResult) {
+    console.log("[3] Grok generated fallback content.");
     return json(grokResult);
   }
 
-  // No content found
+  console.log("[3] Grok fallback FAILED (no API key?).");
+
+  // Final fail
+  console.log("\n❌ ALL METHODS FAILED — returning fallback empty result.");
+
   return json({
     title: topic,
     content: '',
@@ -49,443 +65,407 @@ export const GET: RequestHandler = async ({ url }) => {
   });
 };
 
+
+
+/* -------------------------------------------------------------------------- */
+/*                              DIRECT FETCH LOGIC                             */
+/* -------------------------------------------------------------------------- */
+
 async function tryFetch(topic: string): Promise<BritannicaResult | null> {
   try {
-    // First, try direct URL patterns
+    console.log("[Fetch] Trying direct URL patterns…");
+
     const articleUrl = await tryDirectUrls(topic);
-    
+
     if (articleUrl) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-      
-      const articleResponse = await fetch(articleUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml',
-        },
-        signal: controller.signal,
-      });
-      
-      clearTimeout(timeoutId);
-
-      if (articleResponse.ok) {
-        const articleHtml = await articleResponse.text();
-        const content = parseBritannicaHtml(articleHtml, topic);
-
-        if (content && content.length > 500) {
-          return {
-            title: topic,
-            content,
-            url: articleUrl,
-            isFallback: false,
-            source: 'scrape'
-          };
-        }
+      console.log(`[Fetch] Direct article URL discovered: ${articleUrl}`);
+      const content = await fetchAndParse(articleUrl, topic);
+      if (content && content.length > 500) {
+        console.log("[Fetch] Direct content extraction SUCCESS");
+        return {
+          title: topic,
+          content,
+          url: articleUrl,
+          isFallback: false,
+          source: 'scrape'
+        };
       }
+      console.log("[Fetch] Direct article parse SHORT or EMPTY");
+    } else {
+      console.log("[Fetch] No direct URL match found.");
     }
-    
-    // If direct URL didn't work, try search
+
+    console.log("[Fetch] Trying search scraping…");
     const searchUrl = `${BRITANNICA_BASE_URL}/search?query=${encodeURIComponent(topic)}`;
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-    
-    const searchResponse = await fetch(searchUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
-      },
-      signal: controller.signal,
-    });
-    
-    clearTimeout(timeoutId);
+    console.log("[Fetch] Search URL:", searchUrl);
 
-    if (!searchResponse.ok) {
+    const searchHtml = await timedFetchText(searchUrl);
+
+    if (!searchHtml) {
+      console.log("[Fetch] FAILED to fetch search results.");
       return null;
     }
 
-    const searchHtml = await searchResponse.text();
-    
-    // Check if no results
-    if (searchHtml.includes('No results found') || 
-        searchHtml.includes('did not match any') ||
-        searchHtml.includes('0 results')) {
+    if (searchHtml.includes("No results found")) {
+      console.log("[Fetch] Britannica search says: NO RESULTS");
       return null;
     }
-    
-    // Find article URL from search results
-    const articleUrlMatch = searchHtml.match(/href="(\/[a-z]+\/[^"]+)"/i);
-    
-    if (articleUrlMatch) {
-      const foundUrl = `${BRITANNICA_BASE_URL}${articleUrlMatch[1]}`;
-      
-      const articleController = new AbortController();
-      const articleTimeoutId = setTimeout(() => articleController.abort(), 8000);
-      
-      const articleResponse = await fetch(foundUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'text/html,application/xhtml+xml',
-        },
-        signal: articleController.signal,
-      });
-      
-      clearTimeout(articleTimeoutId);
 
-      if (articleResponse.ok) {
-        const articleHtml = await articleResponse.text();
-        const content = parseBritannicaHtml(articleHtml, topic);
+    // FIXED REGEX: Only match article URLs
+    const articleUrlMatch = searchHtml.match(/href="(\/(?:topic|biography|place|science)\/[^"]+)"/i);
 
-        if (content && content.length > 500) {
-          return {
-            title: topic,
-            content,
-            url: foundUrl,
-            isFallback: false,
-            source: 'scrape'
-          };
-        }
-      }
+    console.log("[Fetch] Search regex match:", articleUrlMatch?.[1]);
+
+    if (!articleUrlMatch) {
+      console.log("[Fetch] No article URL found in search results.");
+      return null;
     }
+
+    const foundUrl = `${BRITANNICA_BASE_URL}${articleUrlMatch[1]}`;
+    console.log("[Fetch] Resolved article URL:", foundUrl);
+
+    const content = await fetchAndParse(foundUrl, topic);
+
+    console.log("[Fetch] Parsed content length:", content?.length);
+
+    if (content && content.length > 500) {
+      console.log("[Fetch] Search-based content extraction SUCCESS");
+      return {
+        title: topic,
+        content,
+        url: foundUrl,
+        isFallback: false,
+        source: 'scrape'
+      };
+    }
+
   } catch (e) {
-    console.log('Britannica fetch failed:', e instanceof Error ? e.message : e);
+    console.log("❌ Fetch scraping error:", e);
   }
 
   return null;
 }
+
+
 
 async function tryDirectUrls(topic: string): Promise<string | null> {
   const formattedTopic = topic.toLowerCase().replace(/\s+/g, '-');
-  const categories = ['topic', 'biography', 'place', 'science', 'technology', 'animal', 'plant', 'event', 'art', 'sports'];
-  
+  const categories = ['topic', 'biography', 'place', 'science'];
+
   for (const category of categories) {
+    const url = `${BRITANNICA_BASE_URL}/${category}/${formattedTopic}`;
+    console.log(`[DirectURL] Checking: ${url}`);
+
     try {
-      const url = `${BRITANNICA_BASE_URL}/${category}/${formattedTopic}`;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      
-      const response = await fetch(url, {
-        method: 'HEAD',
+      const resp = await fetch(url, {
+        method: 'GET',
+        redirect: 'manual',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
-        signal: controller.signal,
+          'User-Agent': 'Mozilla/5.0'
+        }
       });
-      
-      clearTimeout(timeoutId);
-      
-      if (response.ok) {
+
+      console.log(`[DirectURL] Status for ${url}:`, resp.status);
+
+      if (resp.status === 200) {
         return url;
       }
-    } catch {
-      continue;
+    } catch (err) {
+      console.log(`[DirectURL] FAILED for ${url}`, err);
     }
   }
-  
+
   return null;
 }
 
-async function tryPlaywright(topic: string): Promise<BritannicaResult | null> {
+
+
+async function fetchAndParse(url: string, topic: string): Promise<string | null> {
   try {
-    const { chromium } = await import('playwright');
-    
-    const browser = await chromium.launch({ 
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    const html = await timedFetchText(url);
+    if (!html) {
+      console.log("[Parse] FAILED to fetch HTML for:", url);
+      return null;
+    }
+
+    const content = parseBritannicaHtml(html, topic);
+
+    return content;
+  } catch (e) {
+    console.log("❌ fetchAndParse ERROR:", e);
+    return null;
+  }
+}
+
+
+
+async function timedFetchText(url: string, timeoutMs = 9000): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'text/html,application/xhtml+xml'
+      },
+      signal: controller.signal
     });
-    
-    try {
-      const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      });
-      const page = await context.newPage();
-      
-      // Try direct topic URL first
-      const formattedTopic = topic.toLowerCase().replace(/\s+/g, '-');
-      let articleUrl = `${BRITANNICA_BASE_URL}/topic/${formattedTopic}`;
-      
-      await page.goto(articleUrl, { waitUntil: 'domcontentloaded', timeout: 8000 });
-      await page.waitForTimeout(1000);
-      
-      // Check if we landed on an article
-      let isArticle = await page.evaluate(() => {
-        return document.querySelector('article') !== null || 
-               document.querySelector('.topic-content') !== null ||
-               document.querySelector('[class*="article"]') !== null;
-      });
-      
-      if (!isArticle) {
-        // Try search instead
-        const searchUrl = `${BRITANNICA_BASE_URL}/search?query=${encodeURIComponent(topic)}`;
-        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 8000 });
-        await page.waitForTimeout(1000);
-        
-        // Click first result
-        const firstLink = await page.$('a[href*="/topic/"], a[href*="/biography/"], a[href*="/place/"], a[href*="/science/"]');
-        if (firstLink) {
-          const href = await firstLink.getAttribute('href');
-          if (href) {
-            articleUrl = href.startsWith('/') ? `${BRITANNICA_BASE_URL}${href}` : href;
-            await page.goto(articleUrl, { waitUntil: 'domcontentloaded', timeout: 8000 });
-            await page.waitForTimeout(1000);
-          }
+
+    clearTimeout(timeout);
+
+    console.log(`[FetchText] GET ${url} → Status ${resp.status}`);
+
+    if (!resp.ok) return null;
+
+    return await resp.text();
+  } catch (err) {
+    console.log(`[FetchText] ERROR for ${url}:`, err);
+    return null;
+  }
+}
+
+
+
+/* -------------------------------------------------------------------------- */
+/*                               PLAYWRIGHT LOGIC                              */
+/* -------------------------------------------------------------------------- */
+
+async function tryPlaywright(topic: string): Promise<BritannicaResult | null> {
+  let browser: any = null;
+
+  try {
+    console.log("[Playwright] Starting Chromium…");
+    const { chromium } = await import('playwright');
+
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    });
+
+    const context = await browser.newContext({
+      userAgent: "Mozilla/5.0"
+    });
+
+    const page = await context.newPage();
+
+    const formattedTopic = topic.toLowerCase().replace(/\s+/g, '-');
+    let articleUrl = `${BRITANNICA_BASE_URL}/topic/${formattedTopic}`;
+
+    console.log("[Playwright] Visiting:", articleUrl);
+    await page.goto(articleUrl, { waitUntil: 'domcontentloaded', timeout: 8000 });
+
+    await page.waitForTimeout(800);
+
+    let isArticle = await page.evaluate(() => {
+      return (
+        !!document.querySelector("article") ||
+        !!document.querySelector("#article-content")
+      );
+    });
+
+    if (!isArticle) {
+      console.log("[Playwright] Direct URL not article. Trying SEARCH…");
+
+      const searchUrl = `${BRITANNICA_BASE_URL}/search?query=${encodeURIComponent(topic)}`;
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 8000 });
+
+      await page.waitForTimeout(800);
+
+      const link = await page.$('a[href*="/topic/"], a[href*="/biography/"], a[href*="/place/"]');
+      if (link) {
+        const href = await link.getAttribute('href');
+        if (href) {
+          articleUrl = href.startsWith('/') ? BRITANNICA_BASE_URL + href : href;
+          console.log("[Playwright] Search resolved →", articleUrl);
+          await page.goto(articleUrl, { waitUntil: 'domcontentloaded', timeout: 8000 });
+          await page.waitForTimeout(800);
         }
       }
-      
-      // Extract only article paragraphs
-      const content = await page.evaluate(() => {
-        const paragraphs: string[] = [];
-        
-        // Get article title
-        const titleEl = document.querySelector('h1');
-        if (titleEl) {
-          paragraphs.push(`# ${titleEl.textContent?.trim()}`);
+    }
+
+    const content = await page.evaluate(() => {
+      const paragraphs: string[] = [];
+
+      const title = document.querySelector("h1")?.textContent?.trim();
+      if (title) paragraphs.push(`# ${title}`);
+
+      const candidates = [
+        "article p",
+        "#article-content p",
+        ".topic-content p"
+      ];
+
+      for (const sel of candidates) {
+        const nodes = [...document.querySelectorAll(sel)];
+        if (nodes.length) {
+          nodes.forEach(n => {
+            const text = n.textContent?.trim();
+            if (text && text.length > 50) paragraphs.push(text);
+          });
+          break;
         }
-        
-        // Get main article paragraphs only
-        const articleSelectors = [
-          'article p',
-          '.topic-content p',
-          '[class*="article"] p',
-          '.md-article p',
-          'section p'
-        ];
-        
-        for (const selector of articleSelectors) {
-          const ps = document.querySelectorAll(selector);
-          if (ps.length > 0) {
-            ps.forEach(p => {
-              const text = p.textContent?.trim();
-              if (text && text.length > 50 && 
-                  !text.includes('Ask the Chatbot') &&
-                  !text.includes('Learn about this topic') &&
-                  !text.includes('Read More') &&
-                  !text.includes('Cite this article') &&
-                  !text.includes('Written by') &&
-                  !text.includes('Fact-checked by')) {
-                paragraphs.push(text);
-              }
-            });
-            break;
-          }
-        }
-        
-        // Get section headers
-        const headers = document.querySelectorAll('article h2, article h3, .topic-content h2, .topic-content h3');
-        headers.forEach(h => {
-          const text = h.textContent?.trim();
-          if (text && text.length > 2 && text.length < 100) {
-            // Will be added in order
-          }
-        });
-        
-        return paragraphs.join('\n\n');
-      });
-      
-      await browser.close();
-      
-      if (content && content.length > 500) {
-        // Clean up the content
-        let cleaned = content
-          .replace(/britannica/gi, 'this encyclopedia')
-          .replace(/\*\s*\*/g, '')
-          .replace(/\n{3,}/g, '\n\n')
-          .trim();
-        
-        return {
-          title: topic,
-          content: cleaned,
-          url: articleUrl,
-          isFallback: false,
-          source: 'playwright'
-        };
       }
-    } finally {
+
+      return paragraphs.join("\n\n");
+    });
+
+    if (content && content.length > 500) {
+      console.log("[Playwright] Extracted content length:", content.length);
+      return {
+        title: topic,
+        content,
+        url: articleUrl,
+        isFallback: false,
+        source: "playwright"
+      };
+    }
+
+    console.log("[Playwright] Content too short.");
+    return null;
+
+  } catch (err) {
+    console.log("❌ Playwright error:", err);
+    return null;
+  } finally {
+    if (browser && browser.isConnected()) {
+      console.log("[Playwright] Closing browser.");
       await browser.close();
     }
-  } catch (e) {
-    console.log('Playwright scraping failed:', e instanceof Error ? e.message : e);
   }
-  
-  return null;
 }
+
+
+
+/* -------------------------------------------------------------------------- */
+/*                                 GROK FALLBACK                               */
+/* -------------------------------------------------------------------------- */
 
 async function tryGrokApi(topic: string): Promise<BritannicaResult | null> {
   if (!XAI_API_KEY) {
-    console.log('No XAI_API_KEY configured');
+    console.log("[Grok] No API key.");
     return null;
   }
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
+    console.log("[Grok] Sending request…");
+
+    const response = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${XAI_API_KEY}`,
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${XAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'grok-beta',
+        model: "grok-beta",
         messages: [
           {
-            role: 'system',
-            content: `You are writing encyclopedia articles. Write comprehensive, scholarly, and authoritative content.
-
-Format your response in Markdown with:
-- A clear introduction establishing the subject
-- Multiple sections with ## headers
-- Scholarly, formal, and neutral tone
-- Historical context and key facts
-- No self-references to being an AI or encyclopedia`
+            role: "system",
+            content:
+              "You write encyclopedia articles in Britannica style. Formal, neutral, structured, no self-reference."
           },
           {
-            role: 'user',
-            content: `Write a comprehensive encyclopedia article about: ${topic}`
+            role: "user",
+            content: `Write a comprehensive encyclopedia entry about: ${topic}`
           }
         ],
-        temperature: 0.3,
         max_tokens: 2500,
-      }),
-      signal: controller.signal,
+        temperature: 0.3
+      })
     });
-    
-    clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.log('Grok API error:', response.status);
+      console.log("[Grok] API error:", response.status);
       return null;
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
 
-    if (content && content.length > 300) {
-      return {
-        title: topic,
-        content: `# ${topic}\n\n${content}`,
-        url: `${BRITANNICA_BASE_URL}/search?query=${encodeURIComponent(topic)}`,
-        isFallback: false,
-        source: 'grok'
-      };
+    if (!content) {
+      console.log("[Grok] Empty content received.");
+      return null;
     }
-  } catch (e) {
-    console.log('Grok API failed:', e instanceof Error ? e.message : e);
-  }
 
-  return null;
+    console.log("[Grok] Response length:", content.length);
+
+    return {
+      title: topic,
+      content,
+      url: `${BRITANNICA_BASE_URL}/search?query=${encodeURIComponent(topic)}`,
+      isFallback: false,
+      source: "grok"
+    };
+  } catch (err) {
+    console.log("❌ Grok error:", err);
+    return null;
+  }
 }
+
+
+
+/* -------------------------------------------------------------------------- */
+/*                             HTML PARSING (IMPROVED)                         */
+/* -------------------------------------------------------------------------- */
 
 function parseBritannicaHtml(html: string, topic: string): string {
-  // Extract only the main article content
-  let articleContent = '';
-  
-  // Try to find the main article section
-  const articleMatch = html.match(/<article[^>]*>([\s\S]*?)<\/article>/i);
-  if (articleMatch) {
-    articleContent = articleMatch[1];
-  } else {
-    // Try other selectors
-    const contentMatch = html.match(/<section[^>]*class="[^"]*topic-paragraph[^"]*"[^>]*>([\s\S]*?)<\/section>/gi);
-    if (contentMatch) {
-      articleContent = contentMatch.join('\n');
-    } else {
-      // Last resort - get body
-      const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-      articleContent = bodyMatch ? bodyMatch[1] : html;
+  console.log("[Parse] Extracting article content…");
+
+  let articleContent = "";
+
+  // Primary <article>
+  let match = html.match(/<article[\s\S]*?<\/article>/i);
+  if (match) {
+    console.log("[Parse] Found <article> block");
+    articleContent = match[0];
+  }
+
+  // Alternate container
+  if (!articleContent) {
+    match = html.match(/<div[^>]*id="article-content"[^>]*>([\s\S]*?)<\/div>/i);
+    if (match) {
+      console.log("[Parse] Found #article-content block");
+      articleContent = match[1];
     }
   }
-  
-  // Remove unwanted sections FIRST
-  articleContent = articleContent.replace(/<nav[\s\S]*?<\/nav>/gi, '');
-  articleContent = articleContent.replace(/<footer[\s\S]*?<\/footer>/gi, '');
-  articleContent = articleContent.replace(/<header[\s\S]*?<\/header>/gi, '');
-  articleContent = articleContent.replace(/<aside[\s\S]*?<\/aside>/gi, '');
-  articleContent = articleContent.replace(/<script[\s\S]*?<\/script>/gi, '');
-  articleContent = articleContent.replace(/<style[\s\S]*?<\/style>/gi, '');
-  articleContent = articleContent.replace(/<form[\s\S]*?<\/form>/gi, '');
-  articleContent = articleContent.replace(/<button[\s\S]*?<\/button>/gi, '');
-  articleContent = articleContent.replace(/<input[^>]*>/gi, '');
-  
-  // Remove chatbot, related articles, and UI elements
-  articleContent = articleContent.replace(/<div[^>]*class="[^"]*chatbot[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
-  articleContent = articleContent.replace(/<div[^>]*class="[^"]*related[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
-  articleContent = articleContent.replace(/<div[^>]*class="[^"]*sidebar[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
-  articleContent = articleContent.replace(/<div[^>]*class="[^"]*ad[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
-  articleContent = articleContent.replace(/<div[^>]*class="[^"]*share[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
-  articleContent = articleContent.replace(/<div[^>]*class="[^"]*cite[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
-  articleContent = articleContent.replace(/<div[^>]*class="[^"]*feedback[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
-  
-  // Extract title
-  let title = topic;
-  const titleMatch = articleContent.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-  if (titleMatch) {
-    title = titleMatch[1].replace(/<[^>]+>/g, '').trim();
+
+  // Full fallback
+  if (!articleContent) {
+    console.log("[Parse] No article structure found — using <body>");
+    match = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    articleContent = match ? match[1] : html;
   }
-  
-  // Extract paragraphs - only keep substantial ones
+
+  // Strip unwanted UI noise
+  const removePatterns = [
+    /<nav[\s\S]*?<\/nav>/gi,
+    /<footer[\s\S]*?<\/footer>/gi,
+    /<aside[\s\S]*?<\/aside>/gi,
+    /<script[\s\S]*?<\/script>/gi,
+    /<style[\s\S]*?<\/style>/gi,
+    /<div[^>]*class="[^"]*(related|ad|chatbot|share|feedback)[^"]*"[^>]*>[\s\S]*?<\/div>/gi
+  ];
+
+  removePatterns.forEach(pattern => {
+    articleContent = articleContent.replace(pattern, "");
+  });
+
+  // Extract <p> text
   const paragraphs: string[] = [];
-  const pMatches = articleContent.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi);
-  
-  for (const match of pMatches) {
-    let text = match[1];
-    
-    // Remove inline tags but keep text
-    text = text.replace(/<a[^>]*>([^<]*)<\/a>/gi, '$1');
-    text = text.replace(/<[^>]+>/g, '');
-    
-    // Decode entities
-    text = text.replace(/&nbsp;/g, ' ');
-    text = text.replace(/&amp;/g, '&');
-    text = text.replace(/&lt;/g, '<');
-    text = text.replace(/&gt;/g, '>');
-    text = text.replace(/&quot;/g, '"');
-    text = text.replace(/&#39;/g, "'");
-    text = text.replace(/&mdash;/g, '—');
-    text = text.replace(/&ndash;/g, '–');
-    
-    text = text.trim();
-    
-    // Skip junk lines
-    if (text.length < 50) continue;
-    if (text.includes('Ask the Chatbot')) continue;
-    if (text.includes('Learn about this topic')) continue;
-    if (text.includes('Read More')) continue;
-    if (text.includes('Cite this article')) continue;
-    if (text.includes('Written by')) continue;
-    if (text.includes('Fact-checked by')) continue;
-    if (text.includes('Last Updated')) continue;
-    if (text.match(/^\*+$/)) continue;
-    if (text.match(/^[\s\*]+$/)) continue;
-    
-    paragraphs.push(text);
+
+  for (const match of articleContent.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)) {
+    let text = match[1]
+      .replace(/<a[^>]*>(.*?)<\/a>/gi, "$1")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .trim();
+
+    if (text.length > 50) paragraphs.push(text);
   }
-  
-  // Extract headers
-  const headers: { level: number; text: string; index: number }[] = [];
-  let hIndex = 0;
-  
-  for (const level of [2, 3]) {
-    const hMatches = articleContent.matchAll(new RegExp(`<h${level}[^>]*>([\\s\\S]*?)<\\/h${level}>`, 'gi'));
-    for (const match of hMatches) {
-      let text = match[1].replace(/<[^>]+>/g, '').trim();
-      if (text.length > 2 && text.length < 100 && !text.includes('Related')) {
-        headers.push({ level, text, index: hIndex++ });
-      }
-    }
-  }
-  
-  // Build final content
-  let content = `# ${title}\n\n`;
-  content += paragraphs.join('\n\n');
-  
-  // Clean up
-  content = content.replace(/britannica/gi, 'this encyclopedia');
-  content = content.replace(/\*\s*\*/g, '');
-  content = content.replace(/\*\*\s*\*\*/g, '');
-  content = content.replace(/\n{3,}/g, '\n\n');
-  content = content.trim();
-  
-  return content;
+
+  console.log("[Parse] Final paragraph count:", paragraphs.length);
+
+  let content = `# ${topic}\n\n${paragraphs.join("\n\n")}`;
+  return content.trim();
 }
+

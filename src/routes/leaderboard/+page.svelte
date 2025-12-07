@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { leaderboardStore, isLeaderboardLoading } from '$lib/stores/leaderboard';
   import { getRatingInterval } from '$lib/services/glicko2';
+  import { getSourceEmoji, type SourceSlug } from '$lib/services/content';
 
   onMount(async () => {
     await leaderboardStore.load();
@@ -24,6 +25,11 @@
   function getConfidenceInterval(rating: number, rd: number): string {
     const interval = getRatingInterval({ mu: rating, phi: rd, sigma: 0.06 });
     return `${interval.low} - ${interval.high}`;
+  }
+
+  // Helper to avoid TypeScript 'as' in template
+  function getEmoji(slug: string): string {
+    return getSourceEmoji(slug as SourceSlug);
   }
 </script>
 
@@ -101,7 +107,7 @@
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-3">
               <div class="w-10 h-10 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center text-xl flex-shrink-0">
-                {entry.slug === 'wikipedia' ? '📚' : '🤖'}
+                {getEmoji(entry.slug)}
               </div>
               <div class="min-w-0">
                 <h3 class="font-semibold truncate">{entry.name}</h3>

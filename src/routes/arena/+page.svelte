@@ -25,6 +25,9 @@
   } from '$lib/services/shapley';
   import type { Source, VoteWinner } from '$lib/types/database';
 
+  // Accept SvelteKit props to suppress warnings
+  export let data: Record<string, unknown> = {};
+
   // Types
   type ArenaPhase = 'search' | 'loading' | 'comparing' | 'voting' | 'revealing' | 'complete';
 
@@ -537,7 +540,7 @@
               class="mt-4 pt-3 border-t border-slate-700/50 text-sm text-amber-400 hover:text-amber-300 text-center w-full"
               on:click={() => contentExpanded.left = !contentExpanded.left}
             >
-              {contentExpanded.left ? '↑ Show less' : '↓ Show more'}
+              {contentExpanded.left ? '↑ Show less' : '↓ Show the rest'}
             </button>
           {/if}
         </div>
@@ -564,7 +567,7 @@
               class="mt-4 pt-3 border-t border-slate-700/50 text-sm text-amber-400 hover:text-amber-300 text-center w-full"
               on:click={() => contentExpanded.right = !contentExpanded.right}
             >
-              {contentExpanded.right ? '↑ Show less' : '↓ Show more'}
+              {contentExpanded.right ? '↑ Show less' : '↓ Show the rest'}
             </button>
           {/if}
         </div>
@@ -679,11 +682,15 @@
                 </div>
               </div>
               <div class="mt-2 pt-2 border-t border-slate-800/50 flex justify-between text-xs">
-                <div>
-                  <span class="text-slate-500">Shapley Value</span>
+                <div class="group relative">
+                  <span class="text-slate-500 cursor-help border-b border-dotted border-slate-600">Unique Value</span>
                   <span class="ml-1 font-semibold {leftQuality.shapleyValue >= 0 ? 'text-emerald-400' : 'text-red-400'}">
                     {formatShapleyValue(leftQuality.shapleyValue)}
                   </span>
+                  <!-- Tooltip -->
+                  <div class="absolute bottom-full left-0 mb-2 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 w-48 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 shadow-xl">
+                    How much unique information this source adds compared to others. Higher = more distinctive content.
+                  </div>
                 </div>
                 <div>
                   <span class="text-slate-500">Expected</span>
@@ -750,11 +757,15 @@
                 </div>
               </div>
               <div class="mt-2 pt-2 border-t border-slate-800/50 flex justify-between text-xs">
-                <div>
-                  <span class="text-slate-500">Shapley Value</span>
+                <div class="group relative">
+                  <span class="text-slate-500 cursor-help border-b border-dotted border-slate-600">Unique Value</span>
                   <span class="ml-1 font-semibold {rightQuality.shapleyValue >= 0 ? 'text-emerald-400' : 'text-red-400'}">
                     {formatShapleyValue(rightQuality.shapleyValue)}
                   </span>
+                  <!-- Tooltip -->
+                  <div class="absolute bottom-full right-0 mb-2 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 w-48 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 shadow-xl">
+                    How much unique information this source adds compared to others. Higher = more distinctive content.
+                  </div>
                 </div>
                 <div>
                   <span class="text-slate-500">Expected</span>

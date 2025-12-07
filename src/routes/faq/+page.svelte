@@ -1,4 +1,7 @@
 <script lang="ts">
+  // Accept SvelteKit props to suppress warnings
+  export let data: Record<string, unknown> = {};
+  
   let openSection: string | null = 'glicko2';
   
   interface FAQItem {
@@ -98,10 +101,14 @@ Rating-wise, ties cause smaller changes than wins or losses, and they pull both 
   
   const qualityFAQ: FAQItem[] = [
     {
-      question: "What are Shapley values?",
-      answer: `It's a concept from game theory (there's actually a Nobel Prize behind it). The idea: if you have a team, how do you fairly measure each player's contribution?
+      question: "What is 'Unique Value'?",
+      answer: `When you compare or blend multiple encyclopedia sources, "Unique Value" tells you how much distinctive information each source contributes that the others don't have.
 
-We use this in the Knowledge Blender. When you combine multiple sources, Shapley values tell you how much unique value each source added to the mix. A high Shapley value means that source contributed something the others couldn't.`
+<strong>How it works:</strong> We analyze what information is unique to each source vs. what's repeated across all of them. A source with high Unique Value adds something special that you wouldn't get from the others alone.
+
+<strong>Example:</strong> If Wikipedia and Britannica both explain the basics of "Photosynthesis", but Britannica includes detailed historical context that Wikipedia doesn't, Britannica gets a higher Unique Value score for that topic.
+
+<strong>Technical note:</strong> This is based on Shapley values from game theory — a Nobel Prize-winning method for fairly measuring individual contributions in a group.`
     },
     {
       question: "How do you calculate the quality scores?",

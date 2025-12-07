@@ -3,6 +3,9 @@
   import { browser } from '$app/environment';
   import { supabase, isSupabaseConfigured, getSessionId } from '$lib/supabaseClient';
   import { authStore, isAuthenticated, currentUser } from '$lib/stores/auth';
+  
+  // Accept SvelteKit props to suppress warnings
+  export let data: Record<string, unknown> = {};
   import AuthModal from '$lib/components/AuthModal.svelte';
   import { getSourceLogo, getSourceColor, type SourceSlug } from '$lib/services/content';
 
@@ -249,6 +252,66 @@
   
   // Sort source stats by win rate
   $: sortedSourceStats = Object.values(stats.sourceStats).sort((a, b) => b.winRate - a.winRate);
+  
+  // Calculate suggested blend weights based on voting preferences
+  $: suggestedBlend = calculateSuggestedBlend(stats.sourceStats);
+  
+  interface SuggestedBlendWeight {
+    slug: string;
+    name: string;
+    weight: number;
+    winRate: number;
+  }
+  
+  function calculateSuggestedBlend(sourceStats: Record<string, SourceStats>): SuggestedBlendWeight[] {
+    const statsArray = Object.values(sourceStats);
+    if (statsArray.length === 0) return [];
+    
+    // Calculate weights based on win rates
+    // We use a formula that gives more weight to sources with higher win rates
+    // but still includes all sources with at least some votes
+    let totalScore = 0;
+    const scores: Record<string, number> = {};
+    
+    for (const source of statsArray) {
+      // Score = winRate + 50 (so even 0% win rate gets some weight)
+      // This ensures all sources are included but preferred ones get more weight
+      const score = source.winRate + 50;
+      scores[source.slug] = score;
+      totalScore += score;
+    }
+    
+    // Normalize to weights that sum to 1
+    const blendWeights: SuggestedBlendWeight[] = [];
+    for (const source of statsArray) {
+      blendWeights.push({
+        slug: source.slug,
+        name: source.name,
+        weight: totalScore > 0 ? scores[source.slug] / totalScore : 1 / statsArray.length,
+        winRate: source.winRate,
+      });
+    }
+    
+    // Sort by weight descending
+    return blendWeights.sort((a, b) => b.weight - a.weight);
+  }
+  
+  function goToBlenderWithSuggestion() {
+    if (suggestedBlend.length === 0) return;
+    
+    // Store suggested blend in localStorage for the blend page to pick up
+    const blendConfig = {
+      weights: Object.fromEntries(suggestedBlend.map(s => [s.slug, s.weight])),
+      enabled: Object.fromEntries(suggestedBlend.map(s => [s.slug, s.weight > 0.05])), // Enable if weight > 5%
+      fromHistory: true,
+      timestamp: Date.now(),
+    };
+    
+    localStorage.setItem('wikiarena_suggested_blend', JSON.stringify(blendConfig));
+    
+    // Navigate to blend page
+    window.location.href = '/blend';
+  }
 </script>
 
 <svelte:head>
@@ -396,6 +459,68 @@
             <div class="w-3 h-3 rounded bg-slate-800"></div>
             <span>Losses</span>
           </div>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Suggested Blend Section -->
+    {#if suggestedBlend.length >= 2 && stats.totalVotes >= 5}
+      <div class="arena-card mb-8">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h2 class="text-lg font-semibold">Suggested Blend</h2>
+            <p class="text-sm text-slate-400">Based on your voting preferences</p>
+          </div>
+          <button
+            class="vote-btn vote-btn-primary text-sm flex items-center gap-2"
+            on:click={goToBlenderWithSuggestion}
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
+            </svg>
+            Use This Blend
+          </button>
+        </div>
+        
+        <!-- Blend Visualization -->
+        <div class="space-y-3">
+          {#each suggestedBlend as source}
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-2 w-36 flex-shrink-0">
+                <img 
+                  src={getLogo(source.slug, 'wikipedia')} 
+                  alt={source.name}
+                  class="w-5 h-5 object-contain"
+                />
+                <span class="text-sm font-medium truncate {getColor(source.slug, 'wikipedia')}">{source.name}</span>
+              </div>
+              
+              <!-- Weight bar -->
+              <div class="flex-1 h-8 bg-slate-800/50 rounded-lg overflow-hidden relative">
+                <div 
+                  class="h-full transition-all duration-500 {source.winRate >= 60 ? 'bg-gradient-to-r from-emerald-600 to-emerald-500' : source.winRate >= 40 ? 'bg-gradient-to-r from-amber-600 to-amber-500' : 'bg-gradient-to-r from-slate-600 to-slate-500'}"
+                  style="width: {Math.round(source.weight * 100)}%"
+                ></div>
+                <div class="absolute inset-0 flex items-center px-3">
+                  <span class="text-sm font-bold text-white drop-shadow">{Math.round(source.weight * 100)}%</span>
+                </div>
+              </div>
+              
+              <!-- Win rate indicator -->
+              <div class="w-20 text-right flex-shrink-0">
+                <span class="text-xs text-slate-400">Win rate:</span>
+                <span class="text-sm font-semibold ml-1 {source.winRate >= 50 ? 'text-emerald-400' : 'text-slate-400'}">{source.winRate}%</span>
+              </div>
+            </div>
+          {/each}
+        </div>
+        
+        <!-- Explanation -->
+        <div class="mt-4 pt-4 border-t border-slate-800/50">
+          <p class="text-xs text-slate-500 text-center">
+            Weights are calculated based on your win rates. Sources you prefer get higher weight in the blend.
+            You can adjust these in the Blender.
+          </p>
         </div>
       </div>
     {/if}

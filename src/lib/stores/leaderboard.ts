@@ -117,7 +117,13 @@ function createLeaderboardStore() {
                 return entry;
               });
 
-              entries.sort((a, b) => b.rating - a.rating);
+              entries.sort((a, b) => {
+                // Sort by total wins first, then by win rate
+                if (b.total_wins !== a.total_wins) {
+                  return b.total_wins - a.total_wins;
+                }
+                return b.win_rate - a.win_rate;
+              });
 
               return {
                 ...s,

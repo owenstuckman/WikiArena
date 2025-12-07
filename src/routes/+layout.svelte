@@ -8,6 +8,9 @@
   import AuthModal from '$lib/components/AuthModal.svelte';
   import ProfileDropdown from '$lib/components/ProfileDropdown.svelte';
   
+  // Accept SvelteKit props to suppress warnings
+  export let data: Record<string, unknown> = {};
+  
   let mounted = false;
   let showAuthModal = false;
   let mobileMenuOpen = false;

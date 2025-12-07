@@ -1,50 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { leaderboardStore, isLeaderboardLoading } from '$lib/stores/leaderboard';
-  import { getRatingInterval } from '$lib/services/glicko2';
   import { getSourceLogo, getSourceColor, type SourceSlug } from '$lib/services/content';
-  import { RATING_CATEGORIES, type RatingCategory } from '$lib/types/database';
-
-  let selectedCategory: RatingCategory = 'overall';
   
-  // Demo category ratings for each source (simulated - in production these come from DB)
-  const demoCategoryRatings: Record<string, Record<RatingCategory, { rating: number; wins: number; total: number }>> = {
-    'wikipedia': {
-      overall: { rating: 1520, wins: 0, total: 0 },
-      accuracy: { rating: 1480, wins: 45, total: 100 },
-      readability: { rating: 1550, wins: 58, total: 100 },
-      comprehensiveness: { rating: 1600, wins: 65, total: 100 },
-      objectivity: { rating: 1490, wins: 48, total: 100 },
-    },
-    'grokipedia': {
-      overall: { rating: 1480, wins: 0, total: 0 },
-      accuracy: { rating: 1520, wins: 55, total: 100 },
-      readability: { rating: 1480, wins: 47, total: 100 },
-      comprehensiveness: { rating: 1450, wins: 42, total: 100 },
-      objectivity: { rating: 1510, wins: 52, total: 100 },
-    },
-    'britannica': {
-      overall: { rating: 1500, wins: 0, total: 0 },
-      accuracy: { rating: 1550, wins: 60, total: 100 },
-      readability: { rating: 1470, wins: 45, total: 100 },
-      comprehensiveness: { rating: 1480, wins: 46, total: 100 },
-      objectivity: { rating: 1540, wins: 58, total: 100 },
-    },
-    'citizendium': {
-      overall: { rating: 1500, wins: 0, total: 0 },
-      accuracy: { rating: 1530, wins: 56, total: 100 },
-      readability: { rating: 1460, wins: 44, total: 100 },
-      comprehensiveness: { rating: 1470, wins: 45, total: 100 },
-      objectivity: { rating: 1520, wins: 54, total: 100 },
-    },
-    'newworld': {
-      overall: { rating: 1500, wins: 0, total: 0 },
-      accuracy: { rating: 1490, wins: 49, total: 100 },
-      readability: { rating: 1510, wins: 53, total: 100 },
-      comprehensiveness: { rating: 1460, wins: 43, total: 100 },
-      objectivity: { rating: 1500, wins: 50, total: 100 },
-    },
-  };
+  // Accept SvelteKit props to suppress warnings
+  export let data: Record<string, unknown> = {};
+
+  // Sort method
+  type SortMethod = 'wins' | 'win_rate' | 'matches';
+  let sortMethod: SortMethod = 'wins';
 
   onMount(async () => {
     await leaderboardStore.load();
@@ -55,11 +19,6 @@
     leaderboardStore.unsubscribeRealtime();
   });
 
-  function getConfidenceInterval(rating: number, rd: number): string {
-    const interval = getRatingInterval({ mu: rating, phi: rd, sigma: 0.06 });
-    return `${interval.low} - ${interval.high}`;
-  }
-
   function getLogo(slug: string): string {
     return getSourceLogo(slug as SourceSlug);
   }
@@ -68,36 +27,47 @@
     return getSourceColor(slug as SourceSlug);
   }
 
-  function getCategoryRating(slug: string, category: RatingCategory): number {
-    const ratings = demoCategoryRatings[slug];
-    if (!ratings) return 1500;
-    return ratings[category]?.rating || 1500;
-  }
-
-  function getCategoryWinRate(slug: string, category: RatingCategory): number {
-    const ratings = demoCategoryRatings[slug];
-    if (!ratings || !ratings[category]) return 50;
-    const cat = ratings[category];
-    if (cat.total === 0) return 50;
-    return Math.round((cat.wins / cat.total) * 100);
-  }
-
-  // Sort entries by selected category rating
+  // Sort entries by selected method - prioritizing actual performance
   $: sortedEntries = [...$leaderboardStore.entries].sort((a, b) => {
-    if (selectedCategory === 'overall') {
-      return b.rating - a.rating;
+    if (sortMethod === 'wins') {
+      // Sort by total wins, then by win rate
+      if (b.total_wins !== a.total_wins) {
+        return b.total_wins - a.total_wins;
+      }
+      return b.win_rate - a.win_rate;
+    } else if (sortMethod === 'win_rate') {
+      // Sort by win rate (only if enough matches), then by total wins
+      const aHasEnoughMatches = a.total_matches >= 5;
+      const bHasEnoughMatches = b.total_matches >= 5;
+      
+      // Sources with enough matches come first
+      if (aHasEnoughMatches && !bHasEnoughMatches) return -1;
+      if (!aHasEnoughMatches && bHasEnoughMatches) return 1;
+      
+      // Both have enough matches or both don't
+      if (b.win_rate !== a.win_rate) {
+        return b.win_rate - a.win_rate;
+      }
+      return b.total_wins - a.total_wins;
+    } else {
+      // Sort by total matches
+      return b.total_matches - a.total_matches;
     }
-    const ratingA = getCategoryRating(a.slug, selectedCategory);
-    const ratingB = getCategoryRating(b.slug, selectedCategory);
-    return ratingB - ratingA;
   });
+
+  function getRankBadge(rank: number): string {
+    if (rank === 1) return '🥇';
+    if (rank === 2) return '🥈';
+    if (rank === 3) return '🥉';
+    return `#${rank}`;
+  }
 </script>
 
 <svelte:head>
   <title>Leaderboard - WikiArena</title>
 </svelte:head>
 
-<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
   <!-- Header -->
   <div class="text-center mb-8">
     <h1 class="text-2xl font-bold mb-2">Leaderboard</h1>
@@ -116,31 +86,41 @@
     {/if}
   </div>
 
-  <!-- Category Tabs -->
-  <div class="mb-6">
-    <div class="flex flex-wrap gap-2 justify-center">
-      {#each RATING_CATEGORIES as category}
-        <button
-          class="px-4 py-2 rounded-lg text-sm font-medium transition-all
-            {selectedCategory === category.value 
-              ? 'bg-amber-500 text-slate-900' 
-              : 'bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'}"
-          on:click={() => selectedCategory = category.value}
-          title={category.description}
-        >
-          {category.label}
-        </button>
-      {/each}
-    </div>
-    <p class="text-center text-xs text-slate-500 mt-2">
-      {RATING_CATEGORIES.find(c => c.value === selectedCategory)?.description}
-    </p>
+  <!-- Sort Options -->
+  <div class="mb-6 flex justify-center gap-2">
+    <button
+      class="px-4 py-2 rounded-lg text-sm font-medium transition-all
+        {sortMethod === 'wins' 
+          ? 'bg-amber-500 text-slate-900' 
+          : 'bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'}"
+      on:click={() => sortMethod = 'wins'}
+    >
+      Total Wins
+    </button>
+    <button
+      class="px-4 py-2 rounded-lg text-sm font-medium transition-all
+        {sortMethod === 'win_rate' 
+          ? 'bg-amber-500 text-slate-900' 
+          : 'bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'}"
+      on:click={() => sortMethod = 'win_rate'}
+    >
+      Win Rate
+    </button>
+    <button
+      class="px-4 py-2 rounded-lg text-sm font-medium transition-all
+        {sortMethod === 'matches' 
+          ? 'bg-amber-500 text-slate-900' 
+          : 'bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'}"
+      on:click={() => sortMethod = 'matches'}
+    >
+      Total Matches
+    </button>
   </div>
 
   <!-- Loading State -->
   {#if $isLeaderboardLoading}
     <div class="space-y-4">
-      {#each [1, 2, 3] as _}
+      {#each [1, 2, 3, 4, 5] as _}
         <div class="leaderboard-row">
           <div class="skeleton h-10 w-10 rounded-full"></div>
           <div class="flex-1">
@@ -175,21 +155,21 @@
     <div class="space-y-3">
       {#each sortedEntries as entry, index (entry.id)}
         {@const rank = index + 1}
-        {@const categoryRating = selectedCategory === 'overall' ? entry.rating : getCategoryRating(entry.slug, selectedCategory)}
-        {@const categoryWinRate = selectedCategory === 'overall' ? entry.win_rate : getCategoryWinRate(entry.slug, selectedCategory)}
         <div 
-          class="leaderboard-row {rank === 1 ? 'leaderboard-row-top' : ''}"
+          class="leaderboard-row {rank <= 3 ? 'leaderboard-row-top' : ''}"
           style="animation-delay: {index * 50}ms"
         >
           <!-- Rank -->
-          <div class="flex-shrink-0 w-12 text-center">
-            <span class="text-lg font-bold {rank === 1 ? 'text-amber-400' : rank === 2 ? 'text-slate-300' : rank === 3 ? 'text-amber-600' : 'text-slate-500'}">#{rank}</span>
+          <div class="flex-shrink-0 w-14 text-center">
+            <span class="text-xl font-bold {rank === 1 ? 'text-amber-400' : rank === 2 ? 'text-slate-300' : rank === 3 ? 'text-amber-600' : 'text-slate-500'}">
+              {getRankBadge(rank)}
+            </span>
           </div>
 
           <!-- Source Info -->
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-3">
-              <div class="w-10 h-10 rounded-lg bg-white/10 p-1.5 flex items-center justify-center flex-shrink-0">
+              <div class="w-12 h-12 rounded-lg bg-white/10 p-1.5 flex items-center justify-center flex-shrink-0">
                 <img 
                   src={getLogo(entry.slug)} 
                   alt={entry.name}
@@ -197,67 +177,47 @@
                 />
               </div>
               <div class="min-w-0">
-                <h3 class="font-semibold truncate {getColor(entry.slug)}">{entry.name}</h3>
-                <p class="text-sm text-slate-500 truncate">
-                  {#if selectedCategory === 'overall'}
-                    {entry.total_matches} matches · {entry.win_rate}% win rate
-                  {:else}
-                    {categoryWinRate}% win rate in {RATING_CATEGORIES.find(c => c.value === selectedCategory)?.label}
-                  {/if}
+                <h3 class="font-semibold text-lg truncate {getColor(entry.slug)}">{entry.name}</h3>
+                <p class="text-sm text-slate-500">
+                  {entry.total_matches} matches played
                 </p>
               </div>
             </div>
           </div>
 
-          <!-- Category Stats -->
-          {#if selectedCategory === 'overall'}
-            <div class="hidden sm:flex items-center gap-6 text-sm">
+          <!-- Stats -->
+          <div class="flex items-center gap-4 sm:gap-8">
+            <!-- Win/Loss/Tie -->
+            <div class="hidden sm:flex items-center gap-4 text-sm">
               <div class="text-center">
-                <div class="text-emerald-400 font-semibold">{entry.total_wins}</div>
+                <div class="text-2xl font-bold text-emerald-400">{entry.total_wins}</div>
                 <div class="text-slate-500 text-xs">Wins</div>
               </div>
               <div class="text-center">
-                <div class="text-red-400 font-semibold">{entry.total_losses}</div>
+                <div class="text-xl font-semibold text-red-400">{entry.total_losses}</div>
                 <div class="text-slate-500 text-xs">Losses</div>
               </div>
               <div class="text-center">
-                <div class="text-slate-400 font-semibold">{entry.total_ties}</div>
+                <div class="text-xl font-semibold text-slate-400">{entry.total_ties}</div>
                 <div class="text-slate-500 text-xs">Ties</div>
               </div>
             </div>
-          {:else}
-            <!-- Category comparison bars -->
-            <div class="hidden sm:flex items-center gap-2">
-              {#each RATING_CATEGORIES.filter(c => c.value !== 'overall') as cat}
-                {@const catRating = getCategoryRating(entry.slug, cat.value)}
-                {@const normalizedRating = Math.max(0, Math.min(100, ((catRating - 1400) / 200) * 100))}
-                <div class="text-center" title="{cat.label}: {catRating}">
-                  <div class="w-8 h-8 rounded bg-slate-800/50 flex items-end overflow-hidden">
-                    <div 
-                      class="w-full transition-all {cat.value === selectedCategory ? 'bg-amber-500' : 'bg-slate-600'}"
-                      style="height: {normalizedRating}%"
-                    ></div>
-                  </div>
-                  <div class="text-xs text-slate-500 mt-1">{cat.label.substring(0, 3)}</div>
-                </div>
-              {/each}
+            
+            <!-- Mobile: compact stats -->
+            <div class="sm:hidden text-center">
+              <div class="text-lg font-bold text-emerald-400">{entry.total_wins}W</div>
+              <div class="text-xs text-slate-500">{entry.total_losses}L · {entry.total_ties}T</div>
             </div>
-          {/if}
 
-          <!-- Rating -->
-          <div class="text-right">
-            <div class="text-xl font-bold text-gradient">
-              {Math.round(categoryRating)}
+            <!-- Win Rate -->
+            <div class="text-right min-w-[60px]">
+              <div class="text-2xl font-bold text-gradient">
+                {entry.win_rate}%
+              </div>
+              <div class="text-xs text-slate-500">
+                Win Rate
+              </div>
             </div>
-            {#if selectedCategory === 'overall'}
-              <div class="text-xs text-slate-500">
-                ±{Math.round(entry.rating_deviation)}
-              </div>
-            {:else}
-              <div class="text-xs text-slate-500">
-                {RATING_CATEGORIES.find(c => c.value === selectedCategory)?.label}
-              </div>
-            {/if}
           </div>
         </div>
       {/each}
@@ -282,28 +242,19 @@
     <!-- Legend -->
     {#if sortedEntries.length > 0}
       <div class="mt-8 p-4 rounded-xl bg-slate-900/50 border border-slate-800/50">
-        <h3 class="font-semibold mb-3 text-sm text-slate-400">Understanding Ratings</h3>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+        <h3 class="font-semibold mb-3 text-sm text-slate-400">How Rankings Work</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
           <div>
-            <span class="text-amber-400 font-semibold">Rating</span>
-            <span class="text-slate-400"> — Skill estimate using Glicko-2 system. Higher is better.</span>
+            <span class="text-emerald-400 font-semibold">Wins</span>
+            <span class="text-slate-400"> — Total times this source was chosen as better</span>
           </div>
           <div>
-            <span class="text-amber-400 font-semibold">Categories</span>
-            <span class="text-slate-400"> — Separate ratings for accuracy, readability, depth, and objectivity.</span>
+            <span class="text-red-400 font-semibold">Losses</span>
+            <span class="text-slate-400"> — Total times the other source was chosen</span>
           </div>
-        </div>
-        
-        <!-- Category Breakdown -->
-        <div class="mt-4 pt-4 border-t border-slate-800/50">
-          <h4 class="text-xs text-slate-500 mb-3">Rating Categories Explained</h4>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {#each RATING_CATEGORIES.filter(c => c.value !== 'overall') as cat}
-              <div class="p-2 rounded-lg bg-slate-800/30">
-                <div class="font-medium text-sm">{cat.label}</div>
-                <div class="text-xs text-slate-500">{cat.description}</div>
-              </div>
-            {/each}
+          <div>
+            <span class="text-amber-400 font-semibold">Win Rate</span>
+            <span class="text-slate-400"> — Percentage of matches won (wins ÷ total matches)</span>
           </div>
         </div>
       </div>
@@ -313,8 +264,13 @@
 
 <style>
   .leaderboard-row {
+    @apply flex items-center gap-4 p-4 rounded-xl bg-slate-900/50 border border-slate-800/50;
     animation: fadeInUp 0.5s ease-out forwards;
     opacity: 0;
+  }
+
+  .leaderboard-row-top {
+    @apply border-amber-500/30 bg-gradient-to-r from-amber-500/5 to-transparent;
   }
 
   @keyframes fadeInUp {
@@ -326,5 +282,9 @@
       opacity: 1;
       transform: translateY(0);
     }
+  }
+
+  .skeleton {
+    @apply bg-slate-700/50 animate-pulse rounded;
   }
 </style>

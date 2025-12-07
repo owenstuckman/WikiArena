@@ -22,11 +22,11 @@ WikiArena is a crowdsourced evaluation platform that allows users to compare and
 
 | Source | Description | API/Method |
 |--------|-------------|------------|
-| **Wikipedia** | Community-edited encyclopedia | MediaWiki API |
+| **Wikipedia** | Community-edited encyclopedia | MediaWiki Parse API |
 | **Grokipedia** | AI-powered encyclopedia | Scraped from grokipedia.com |
-| **Encyclopedia Britannica** | Expert-written since 1768 | Demo content |
-| **Citizendium** | Expert-guided encyclopedia | MediaWiki API |
-| **New World Encyclopedia** | Editorial oversight encyclopedia | MediaWiki API |
+| **Encyclopedia Britannica** | Expert-written since 1768 | Scraped from britannica.com |
+| **Citizendium** | Expert-guided encyclopedia | MediaWiki API (HTML) |
+| **New World Encyclopedia** | Editorial oversight encyclopedia | MediaWiki API (HTML) |
 
 ## 🛠️ Tech Stack
 
@@ -208,13 +208,16 @@ rating_history   -- Historical rating data for charts
 ## 🔌 API Integration
 
 ### Wikipedia
-Uses the [MediaWiki REST API](https://www.mediawiki.org/wiki/API:REST_API) and Parse API to fetch full article content.
+Uses the [MediaWiki Parse API](https://www.mediawiki.org/wiki/API:Parsing_wikitext) to fetch full article content with HTML-to-Markdown conversion preserving links.
 
 ### Grokipedia
-Scrapes content directly from [grokipedia.com](https://grokipedia.com/page/{topic}).
+Scrapes content directly from [grokipedia.com](https://grokipedia.com/page/{topic}). Converts relative links to absolute URLs.
+
+### Encyclopedia Britannica
+Scrapes content from [britannica.com](https://www.britannica.com). Searches for articles then fetches full content with proper link handling. Falls back to demo content if unavailable.
 
 ### Citizendium & New World Encyclopedia
-Uses MediaWiki API (TextExtracts) to fetch article content.
+Uses MediaWiki API with HTML extracts (not plain text) to preserve internal links. Converts wiki links to absolute URLs.
 
 ### xAI Grok (Knowledge Blender)
 Requires an [xAI API key](https://console.x.ai/). Used server-side to synthesize content from multiple sources into a unified article.

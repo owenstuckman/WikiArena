@@ -3,6 +3,9 @@
   import { goto } from '$app/navigation';
   import { browser } from '$app/environment';
   import { supabase, isSupabaseConfigured } from '$lib/supabaseClient';
+  
+  // Accept SvelteKit props to suppress warnings
+  export let data: Record<string, unknown> = {};
   import { authStore } from '$lib/stores/auth';
   
   let newPassword = '';

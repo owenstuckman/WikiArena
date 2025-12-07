@@ -2,6 +2,9 @@
   import { onMount } from 'svelte';
   import { leaderboardStore } from '$lib/stores/leaderboard';
   
+  // Accept SvelteKit props to suppress warnings
+  export let data: Record<string, unknown> = {};
+  
   let stats = {
     totalVotes: 0,
     totalSources: 0,

@@ -5,7 +5,12 @@
 
 import type { Source, Topic, LeaderboardEntry } from '$lib/types/database';
 
-// Mock sources
+// Standard Glicko-2 initial values for fair baseline
+const INITIAL_RATING = 1500;
+const INITIAL_RD = 350; // Rating deviation - high because sources are unrated
+const INITIAL_VOLATILITY = 0.06;
+
+// Mock sources - ALL START WITH EQUAL RATINGS for fairness
 export const DEMO_SOURCES: Source[] = [
   {
     id: 'source-wikipedia',
@@ -16,13 +21,13 @@ export const DEMO_SOURCES: Source[] = [
     api_config: {},
     logo_url: null,
     is_active: true,
-    rating: 1542,
-    rating_deviation: 85,
-    volatility: 0.06,
-    total_matches: 247,
-    total_wins: 142,
-    total_losses: 89,
-    total_ties: 16,
+    rating: INITIAL_RATING,
+    rating_deviation: INITIAL_RD,
+    volatility: INITIAL_VOLATILITY,
+    total_matches: 0,
+    total_wins: 0,
+    total_losses: 0,
+    total_ties: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -35,13 +40,13 @@ export const DEMO_SOURCES: Source[] = [
     api_config: {},
     logo_url: null,
     is_active: true,
-    rating: 1458,
-    rating_deviation: 92,
-    volatility: 0.06,
-    total_matches: 247,
-    total_wins: 89,
-    total_losses: 142,
-    total_ties: 16,
+    rating: INITIAL_RATING,
+    rating_deviation: INITIAL_RD,
+    volatility: INITIAL_VOLATILITY,
+    total_matches: 0,
+    total_wins: 0,
+    total_losses: 0,
+    total_ties: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -54,13 +59,13 @@ export const DEMO_SOURCES: Source[] = [
     api_config: {},
     logo_url: null,
     is_active: true,
-    rating: 1512,
-    rating_deviation: 95,
-    volatility: 0.06,
-    total_matches: 198,
-    total_wins: 108,
-    total_losses: 78,
-    total_ties: 12,
+    rating: INITIAL_RATING,
+    rating_deviation: INITIAL_RD,
+    volatility: INITIAL_VOLATILITY,
+    total_matches: 0,
+    total_wins: 0,
+    total_losses: 0,
+    total_ties: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -73,13 +78,13 @@ export const DEMO_SOURCES: Source[] = [
     api_config: {},
     logo_url: null,
     is_active: true,
-    rating: 1495,
-    rating_deviation: 110,
-    volatility: 0.06,
-    total_matches: 156,
-    total_wins: 82,
-    total_losses: 64,
-    total_ties: 10,
+    rating: INITIAL_RATING,
+    rating_deviation: INITIAL_RD,
+    volatility: INITIAL_VOLATILITY,
+    total_matches: 0,
+    total_wins: 0,
+    total_losses: 0,
+    total_ties: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -92,13 +97,13 @@ export const DEMO_SOURCES: Source[] = [
     api_config: {},
     logo_url: null,
     is_active: true,
-    rating: 1478,
-    rating_deviation: 115,
-    volatility: 0.06,
-    total_matches: 142,
-    total_wins: 71,
-    total_losses: 62,
-    total_ties: 9,
+    rating: INITIAL_RATING,
+    rating_deviation: INITIAL_RD,
+    volatility: INITIAL_VOLATILITY,
+    total_matches: 0,
+    total_wins: 0,
+    total_losses: 0,
+    total_ties: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -357,7 +362,13 @@ export function getDemoLeaderboard(): LeaderboardEntry[] {
     win_rate: source.total_matches > 0 
       ? Math.round((source.total_wins / source.total_matches) * 1000) / 10 
       : 0,
-  })).sort((a, b) => b.rating - a.rating);
+  })).sort((a, b) => {
+    // Sort by total wins first, then by win rate
+    if (b.total_wins !== a.total_wins) {
+      return b.total_wins - a.total_wins;
+    }
+    return b.win_rate - a.win_rate;
+  });
 }
 
 /**

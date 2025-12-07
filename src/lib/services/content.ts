@@ -611,7 +611,7 @@ export async function getRandomWikipediaArticle(): Promise<string | null> {
 }
 
 // ============================================
-// GROKIPEDIA (Scraping from grokipedia.com)
+// GROKIPEDIA (via server-side API to avoid CORS)
 // ============================================
 
 const GROKIPEDIA_BASE_URL = 'https://grokipedia.com/page';
@@ -624,240 +624,44 @@ export interface GrokipediaArticle {
 }
 
 /**
- * Fetch Grokipedia content by scraping grokipedia.com
+ * Fetch Grokipedia content via server-side API (to avoid CORS issues)
+ * Returns null if content not found - allows arena to try different source
  */
 export async function fetchGrokipediaContent(
   topic: string,
   apiKey?: string
 ): Promise<GrokipediaArticle | null> {
   try {
-    // Format topic for URL (replace spaces with underscores)
-    const formattedTopic = topic.trim().replace(/\s+/g, '_');
-    const url = `${GROKIPEDIA_BASE_URL}/${encodeURIComponent(formattedTopic)}`;
+    // Use our server-side API endpoint to avoid CORS
+    const response = await fetch(`/api/grokipedia?topic=${encodeURIComponent(topic)}`);
     
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'WikiArena/1.0 (Knowledge Comparison Platform)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    });
-
     if (!response.ok) {
-      console.error('Grokipedia fetch error:', response.status);
-      // Try alternative URL formats
-      return await tryAlternativeGrokipediaUrls(topic);
+      console.error('Grokipedia API error:', response.status);
+      return null; // Return null so arena can try different source
     }
 
-    const html = await response.text();
-    const content = parseGrokipediaHtml(html, topic);
+    const data = await response.json();
     
-    if (content && content.length > 100) {
-      return {
-        title: topic,
-        content: sanitizeContent(content, 'grokipedia'),
-        source: 'grokipedia',
-        url: url,
-      };
+    // If notFound, return null so arena can try different source
+    if (data.notFound || (data.error && !data.content) || !data.content) {
+      console.log('Grokipedia: No content found for', topic);
+      return null;
     }
     
-    // If content is too short, try alternative formats
-    return await tryAlternativeGrokipediaUrls(topic);
+    return {
+      title: data.title || topic,
+      content: sanitizeContent(data.content, 'grokipedia'),
+      source: 'grokipedia',
+      url: data.url || `${GROKIPEDIA_BASE_URL}/${encodeURIComponent(topic.replace(/\s+/g, '_'))}`,
+    };
   } catch (e) {
     console.error('Grokipedia error:', e);
-    return {
-      title: topic,
-      content: sanitizeContent(generateGrokipediaDemoContent(topic), 'grokipedia'),
-      source: 'grokipedia',
-      url: `${GROKIPEDIA_BASE_URL}/${encodeURIComponent(topic)}`,
-    };
+    return null; // Return null so arena can try different source
   }
-}
-
-/**
- * Try alternative URL formats for Grokipedia
- */
-async function tryAlternativeGrokipediaUrls(topic: string): Promise<GrokipediaArticle | null> {
-  const variations = [
-    topic.replace(/\s+/g, '_'),                    // Replace spaces with underscores
-    topic.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('_'), // Title Case
-    topic.toLowerCase().replace(/\s+/g, '_'),      // lowercase with underscores
-    topic,                                          // Original
-  ];
-  
-  for (const variant of variations) {
-    try {
-      const url = `${GROKIPEDIA_BASE_URL}/${encodeURIComponent(variant)}`;
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'WikiArena/1.0 (Knowledge Comparison Platform)',
-        },
-      });
-      
-      if (response.ok) {
-        const html = await response.text();
-        const content = parseGrokipediaHtml(html, topic);
-        
-        if (content && content.length > 100) {
-          return {
-            title: topic,
-            content: sanitizeContent(content, 'grokipedia'),
-            source: 'grokipedia',
-            url: url,
-          };
-        }
-      }
-    } catch (e) {
-      // Continue to next variation
-    }
-  }
-  
-  // Return demo content if all attempts fail
-  return {
-    title: topic,
-    content: sanitizeContent(generateGrokipediaDemoContent(topic), 'grokipedia'),
-    source: 'grokipedia',
-    url: `${GROKIPEDIA_BASE_URL}/${encodeURIComponent(topic)}`,
-  };
-}
-
-/**
- * Parse HTML from Grokipedia page and extract content as markdown
- */
-function parseGrokipediaHtml(html: string, topic: string): string {
-  let content = '';
-  
-  // Try to find the main content section
-  // Common patterns for article content
-  const contentPatterns = [
-    /<article[^>]*>([\s\S]*?)<\/article>/i,
-    /<main[^>]*>([\s\S]*?)<\/main>/i,
-    /<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-    /<div[^>]*class="[^"]*article[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-    /<div[^>]*class="[^"]*prose[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-    /<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-    /<div[^>]*class="[^"]*post-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-    /<div[^>]*class="[^"]*page-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-  ];
-  
-  for (const pattern of contentPatterns) {
-    const match = html.match(pattern);
-    if (match && match[1] && match[1].length > 200) {
-      content = match[1];
-      break;
-    }
-  }
-  
-  // If no pattern matched, try to get body content
-  if (!content) {
-    const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    if (bodyMatch) {
-      content = bodyMatch[1];
-    }
-  }
-  
-  if (!content) return '';
-  
-  // Convert HTML to markdown-like text
-  let markdown = `# ${topic}\n\n`;
-  
-  // Remove script and style tags
-  content = content.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
-  content = content.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-  content = content.replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '');
-  content = content.replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '');
-  content = content.replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '');
-  content = content.replace(/<aside[^>]*>[\s\S]*?<\/aside>/gi, '');
-  
-  // Convert headings
-  content = content.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
-  content = content.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n');
-  content = content.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n');
-  content = content.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '\n#### $1\n');
-  
-  // Convert paragraphs
-  content = content.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n$1\n');
-  
-  // Convert lists
-  content = content.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1');
-  content = content.replace(/<\/?[uo]l[^>]*>/gi, '\n');
-  
-  // Convert bold and italic
-  content = content.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '**$1**');
-  content = content.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, '**$1**');
-  content = content.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '*$1*');
-  content = content.replace(/<i[^>]*>([\s\S]*?)<\/i>/gi, '*$1*');
-  
-  // Convert links - handle both absolute and relative URLs
-  // First, convert relative Grokipedia links to absolute
-  content = content.replace(/<a[^>]*href="\/page\/([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, 
-    '[$2](https://grokipedia.com/page/$1)');
-  // Then convert other relative links
-  content = content.replace(/<a[^>]*href="\/([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, 
-    '[$2](https://grokipedia.com/$1)');
-  // Finally convert absolute links
-  content = content.replace(/<a[^>]*href="(https?:\/\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
-  // Handle any remaining links with href
-  content = content.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
-  
-  // Convert line breaks
-  content = content.replace(/<br\s*\/?>/gi, '\n');
-  
-  // Remove remaining HTML tags
-  content = content.replace(/<[^>]+>/g, '');
-  
-  // Decode HTML entities
-  content = decodeHtmlEntities(content);
-  
-  // Clean up whitespace
-  content = content.replace(/\n{3,}/g, '\n\n');
-  content = content.replace(/^\s+|\s+$/gm, '');
-  content = content.trim();
-  
-  // Don't include the title again if it's at the start
-  if (content.toLowerCase().startsWith(topic.toLowerCase())) {
-    const firstNewline = content.indexOf('\n');
-    if (firstNewline > 0 && firstNewline < topic.length + 20) {
-      content = content.substring(firstNewline).trim();
-    }
-  }
-  
-  return markdown + content;
-}
-
-function generateGrokipediaDemoContent(topic: string): string {
-  return `# ${topic}
-
-${topic} is a subject of significant interest that encompasses various aspects of human knowledge and understanding.
-
-## Overview
-
-The study and understanding of ${topic} has evolved significantly over time, with contributions from numerous researchers, experts, and practitioners across different fields. Today, it remains an important area of interest for academics, professionals, and curious minds alike.
-
-## Key Concepts
-
-Key aspects include:
-
-- **Fundamental principles** - The core ideas that form the foundation of understanding
-- **Practical applications** - How this knowledge is applied in real-world scenarios
-- **Ongoing developments** - Current research and emerging trends in the field
-
-Understanding these elements provides a solid foundation for deeper exploration of the subject.
-
-## Historical Context
-
-The historical development of ${topic} can be traced through multiple periods, each contributing unique insights and advancements to our current understanding. From early observations and theories to modern investigations, knowledge in this area has grown substantially.
-
-## Recent Developments
-
-In recent years, ${topic} has gained increased attention due to technological advancements and changing societal needs. This has led to new research directions, innovative applications, and broader public awareness.
-
-## Significance
-
-For those interested in learning more, there are numerous resources available including academic papers, books, online courses, and expert communities dedicated to advancing knowledge in this area.`;
 }
 
 // ============================================
-// ENCYCLOPEDIA BRITANNICA (Scraping from britannica.com)
+// ENCYCLOPEDIA BRITANNICA (via server-side API to avoid CORS)
 // ============================================
 
 const BRITANNICA_BASE_URL = 'https://www.britannica.com';
@@ -870,283 +674,37 @@ export interface BritannicaArticle {
 }
 
 /**
- * Fetch Encyclopedia Britannica content by scraping britannica.com
+ * Fetch Encyclopedia Britannica content via server-side API (to avoid CORS issues)
+ * Returns null if content not found - allows arena to try different source
  */
 export async function fetchBritannicaContent(topic: string): Promise<BritannicaArticle | null> {
   try {
-    // First, search for the topic to get the article URL
-    const searchUrl = `${BRITANNICA_BASE_URL}/search?query=${encodeURIComponent(topic)}`;
+    // Use our server-side API endpoint to avoid CORS
+    const response = await fetch(`/api/britannica?topic=${encodeURIComponent(topic)}`);
     
-    const searchResponse = await fetch(searchUrl, {
-      headers: {
-        'User-Agent': 'WikiArena/1.0 (Knowledge Comparison Platform)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    });
-
-    if (!searchResponse.ok) {
-      console.error('Britannica search error:', searchResponse.status);
-      return generateBritannicaFallback(topic);
+    if (!response.ok) {
+      console.error('Britannica API error:', response.status);
+      return null; // Return null so arena can try different source
     }
 
-    const searchHtml = await searchResponse.text();
+    const data = await response.json();
     
-    // Find the first article link from search results
-    const articleUrlMatch = searchHtml.match(/<a[^>]*href="(\/[^"]*\/[^"]+)"[^>]*class="[^"]*md-crosslink[^"]*"[^>]*>/i) ||
-                           searchHtml.match(/<a[^>]*class="[^"]*md-crosslink[^"]*"[^>]*href="(\/[^"]*\/[^"]+)"[^>]*>/i) ||
-                           searchHtml.match(/href="(\/topic\/[^"]+)"/i) ||
-                           searchHtml.match(/href="(\/biography\/[^"]+)"/i) ||
-                           searchHtml.match(/href="(\/place\/[^"]+)"/i) ||
-                           searchHtml.match(/href="(\/science\/[^"]+)"/i) ||
-                           searchHtml.match(/href="(\/technology\/[^"]+)"/i) ||
-                           searchHtml.match(/href="(\/animal\/[^"]+)"/i) ||
-                           searchHtml.match(/href="(\/plant\/[^"]+)"/i) ||
-                           searchHtml.match(/href="(\/event\/[^"]+)"/i) ||
-                           searchHtml.match(/href="(\/art\/[^"]+)"/i);
-    
-    if (!articleUrlMatch) {
-      // Try direct URL patterns
-      return await tryDirectBritannicaUrls(topic);
-    }
-
-    const articleUrl = `${BRITANNICA_BASE_URL}${articleUrlMatch[1]}`;
-    
-    // Fetch the actual article
-    const articleResponse = await fetch(articleUrl, {
-      headers: {
-        'User-Agent': 'WikiArena/1.0 (Knowledge Comparison Platform)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    });
-
-    if (!articleResponse.ok) {
-      return generateBritannicaFallback(topic);
-    }
-
-    const articleHtml = await articleResponse.text();
-    const content = parseBritannicaHtml(articleHtml, topic);
-    
-    if (content && content.length > 200) {
-      return {
-        title: topic,
-        content: sanitizeContent(content, 'britannica'),
-        source: 'britannica',
-        url: articleUrl,
-      };
+    // If notFound, return null so arena can try different source
+    if (data.notFound || (data.error && !data.content) || !data.content) {
+      console.log('Britannica: No content found for', topic);
+      return null;
     }
     
-    return generateBritannicaFallback(topic);
+    return {
+      title: data.title || topic,
+      content: sanitizeContent(data.content, 'britannica'),
+      source: 'britannica',
+      url: data.url || `${BRITANNICA_BASE_URL}/search?query=${encodeURIComponent(topic)}`,
+    };
   } catch (e) {
     console.error('Britannica error:', e);
-    return generateBritannicaFallback(topic);
+    return null; // Return null so arena can try different source
   }
-}
-
-/**
- * Try direct URL patterns for Britannica articles
- */
-async function tryDirectBritannicaUrls(topic: string): Promise<BritannicaArticle | null> {
-  const formattedTopic = topic.toLowerCase().replace(/\s+/g, '-');
-  const categories = ['topic', 'biography', 'place', 'science', 'technology', 'animal', 'plant', 'event', 'art'];
-  
-  for (const category of categories) {
-    try {
-      const url = `${BRITANNICA_BASE_URL}/${category}/${formattedTopic}`;
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'WikiArena/1.0 (Knowledge Comparison Platform)',
-        },
-      });
-      
-      if (response.ok) {
-        const html = await response.text();
-        const content = parseBritannicaHtml(html, topic);
-        
-        if (content && content.length > 200) {
-          return {
-            title: topic,
-            content: sanitizeContent(content, 'britannica'),
-            source: 'britannica',
-            url: url,
-          };
-        }
-      }
-    } catch (e) {
-      // Continue to next category
-    }
-  }
-  
-  return generateBritannicaFallback(topic);
-}
-
-/**
- * Parse HTML from Britannica page and extract content as markdown
- */
-function parseBritannicaHtml(html: string, topic: string): string {
-  let content = '';
-  
-  // Try to find the main article content
-  // Britannica uses various content containers
-  const contentPatterns = [
-    /<div[^>]*class="[^"]*topic-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-    /<article[^>]*>([\s\S]*?)<\/article>/i,
-    /<div[^>]*class="[^"]*md-article-container[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-    /<section[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/section>/i,
-    /<div[^>]*id="ref\d+"[^>]*>([\s\S]*?)<\/div>/gi,
-  ];
-  
-  for (const pattern of contentPatterns) {
-    const match = html.match(pattern);
-    if (match && match[1] && match[1].length > 300) {
-      content = match[1];
-      break;
-    }
-  }
-  
-  // Also try to get all paragraph content
-  if (!content || content.length < 300) {
-    const paragraphs: string[] = [];
-    const pMatch = html.matchAll(/<p[^>]*class="[^"]*topic-paragraph[^"]*"[^>]*>([\s\S]*?)<\/p>/gi);
-    for (const m of pMatch) {
-      if (m[1]) paragraphs.push(m[1]);
-    }
-    if (paragraphs.length > 0) {
-      content = paragraphs.join('\n\n');
-    }
-  }
-  
-  // Fallback: get body content
-  if (!content || content.length < 300) {
-    const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    if (bodyMatch) {
-      content = bodyMatch[1];
-    }
-  }
-  
-  if (!content) return '';
-  
-  // Convert HTML to markdown
-  let markdown = `# ${topic}\n\n`;
-  
-  // Remove unwanted elements
-  content = content.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
-  content = content.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-  content = content.replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '');
-  content = content.replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '');
-  content = content.replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '');
-  content = content.replace(/<aside[^>]*>[\s\S]*?<\/aside>/gi, '');
-  content = content.replace(/<figure[^>]*>[\s\S]*?<\/figure>/gi, '');
-  content = content.replace(/<button[^>]*>[\s\S]*?<\/button>/gi, '');
-  content = content.replace(/<!--[\s\S]*?-->/gi, '');
-  
-  // Convert headings
-  content = content.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
-  content = content.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n');
-  content = content.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n');
-  content = content.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '\n#### $1\n');
-  
-  // Convert paragraphs
-  content = content.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n$1\n');
-  
-  // Convert lists
-  content = content.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1');
-  content = content.replace(/<\/?[uo]l[^>]*>/gi, '\n');
-  
-  // Convert bold and italic
-  content = content.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '**$1**');
-  content = content.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, '**$1**');
-  content = content.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '*$1*');
-  content = content.replace(/<i[^>]*>([\s\S]*?)<\/i>/gi, '*$1*');
-  
-  // Convert Britannica internal links to absolute URLs
-  content = content.replace(/<a[^>]*href="\/([^"#]+)"[^>]*>([\s\S]*?)<\/a>/gi, 
-    `[$2](${BRITANNICA_BASE_URL}/$1)`);
-  // Convert external links
-  content = content.replace(/<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
-  
-  // Convert line breaks
-  content = content.replace(/<br\s*\/?>/gi, '\n');
-  
-  // Remove remaining HTML tags
-  content = content.replace(/<[^>]+>/g, '');
-  
-  // Decode HTML entities
-  content = decodeHtmlEntities(content);
-  
-  // Clean up whitespace
-  content = content.replace(/\n{3,}/g, '\n\n');
-  content = content.replace(/^\s+|\s+$/gm, '');
-  content = content.trim();
-  
-  // Don't include the title again if it's at the start
-  const topicLower = topic.toLowerCase();
-  const contentLower = content.toLowerCase();
-  if (contentLower.startsWith(topicLower) || contentLower.startsWith(`# ${topicLower}`)) {
-    const firstNewline = content.indexOf('\n');
-    if (firstNewline > 0 && firstNewline < topic.length + 30) {
-      content = content.substring(firstNewline).trim();
-    }
-  }
-  
-  return markdown + content;
-}
-
-/**
- * Generate fallback content when Britannica is unavailable
- */
-function generateBritannicaFallback(topic: string): BritannicaArticle {
-  return {
-    title: topic,
-    content: sanitizeContent(generateBritannicaDemoContent(topic), 'britannica'),
-    source: 'britannica',
-    url: `https://www.britannica.com/search?query=${encodeURIComponent(topic)}`,
-  };
-}
-
-function generateBritannicaDemoContent(topic: string): string {
-  return `# ${topic}
-
-${topic} represents an important area of human knowledge that has been extensively documented and studied by scholars and experts worldwide.
-
-## Introduction
-
-The subject draws upon centuries of accumulated knowledge and the expertise of leading authorities in the field. Understanding ${topic} requires examining both its historical foundations and contemporary developments.
-
-## Historical Background
-
-The historical development of ${topic} can be traced through multiple periods, each contributing unique insights and advancements to our current understanding. From early observations and theories to modern scientific and scholarly investigations, the evolution of knowledge in this area demonstrates humanity's persistent quest for understanding.
-
-## Key Aspects
-
-Several key aspects define our understanding of ${topic}:
-
-- **Theoretical foundations** - The underlying principles and frameworks
-- **Empirical evidence** - Observations and data supporting current understanding
-- **Practical implications** - How this knowledge affects various fields and applications
-
-## Contemporary Understanding
-
-Contemporary perspectives on ${topic} reflect both traditional scholarship and cutting-edge research. Experts continue to refine our understanding through:
-
-- Rigorous investigation and experimentation
-- Peer review and academic discourse
-- Integration of new technologies and methodologies
-- Cross-disciplinary collaboration
-
-## Applications and Impact
-
-The practical applications and implications of ${topic} extend across various domains, influencing:
-
-- **Education** - How this subject is taught and learned
-- **Research** - Ongoing investigations and discoveries
-- **Technology** - Innovations inspired by this knowledge
-- **Society** - Broader cultural and social implications
-
-Understanding these connections helps illuminate the broader significance of this subject in both historical and contemporary contexts.
-
----
-
-*Note: This is placeholder content. The full Britannica article may be available at [britannica.com](https://www.britannica.com/search?query=${encodeURIComponent(topic)}).*`;
 }
 
 // ============================================
@@ -1225,133 +783,38 @@ export interface CitizendiumArticle {
 }
 
 /**
- * Fetch Citizendium article content
+ * Fetch Citizendium article content via server-side API
  * Citizendium is a MediaWiki-based expert-guided encyclopedia
+ * Returns null if content not found - allows arena to try different source
  */
 export async function fetchCitizendiumContent(topic: string): Promise<CitizendiumArticle | null> {
   try {
-    const params = new URLSearchParams({
-      action: 'query',
-      titles: topic,
-      prop: 'extracts|info',
-      exintro: '0',
-      explaintext: '0', // Get HTML to preserve links
-      exsectionformat: 'wiki',
-      inprop: 'url',
-      format: 'json',
-      origin: '*',
-    });
-    
-    const response = await fetch(`${CITIZENDIUM_API}?${params}`);
+    // Use server-side API to avoid CORS issues
+    const response = await fetch(`/api/citizendium?topic=${encodeURIComponent(topic)}`);
     
     if (!response.ok) {
       console.error('Citizendium API error:', response.status);
-      return generateCitizendiumFallback(topic);
+      return null; // Return null so arena can try different source
     }
     
     const data = await response.json();
-    const pages = data.query?.pages;
     
-    if (!pages) {
-      return generateCitizendiumFallback(topic);
+    // If notFound, return null so arena can try different source
+    if (data.notFound || (data.error && !data.content) || !data.content) {
+      console.log('Citizendium: No content found for', topic);
+      return null;
     }
-    
-    const pageId = Object.keys(pages)[0];
-    const page = pages[pageId];
-    
-    if (pageId === '-1' || !page.extract) {
-      // Try search if exact title not found
-      return await searchCitizendium(topic);
-    }
-    
-    // Convert HTML to markdown, including links
-    const markdownContent = convertMediaWikiHtmlToMarkdown(page.title, page.extract, 'https://citizendium.org');
-    const sanitizedContent = sanitizeContent(markdownContent, 'citizendium');
     
     return {
-      title: page.title,
-      content: sanitizedContent,
+      title: data.title || topic,
+      content: sanitizeContent(data.content, 'citizendium'),
       source: 'citizendium',
-      url: page.fullurl || `https://citizendium.org/wiki/${encodeURIComponent(topic)}`,
+      url: data.url || `https://citizendium.org/wiki/${encodeURIComponent(topic)}`,
     };
   } catch (e) {
     console.error('Citizendium error:', e);
-    return generateCitizendiumFallback(topic);
+    return null; // Return null so arena can try different source
   }
-}
-
-/**
- * Search Citizendium for a topic
- */
-async function searchCitizendium(topic: string): Promise<CitizendiumArticle | null> {
-  try {
-    const params = new URLSearchParams({
-      action: 'query',
-      list: 'search',
-      srsearch: topic,
-      srlimit: '1',
-      format: 'json',
-      origin: '*',
-    });
-    
-    const response = await fetch(`${CITIZENDIUM_API}?${params}`);
-    
-    if (!response.ok) {
-      return generateCitizendiumFallback(topic);
-    }
-    
-    const data = await response.json();
-    const results = data.query?.search;
-    
-    if (!results || results.length === 0) {
-      return generateCitizendiumFallback(topic);
-    }
-    
-    // Fetch the found article
-    return fetchCitizendiumContent(results[0].title);
-  } catch (e) {
-    console.error('Citizendium search error:', e);
-    return generateCitizendiumFallback(topic);
-  }
-}
-
-function generateCitizendiumFallback(topic: string): CitizendiumArticle {
-  return {
-    title: topic,
-    content: sanitizeContent(generateCitizendiumDemoContent(topic), 'citizendium'),
-    source: 'citizendium',
-    url: `https://citizendium.org/wiki/${encodeURIComponent(topic)}`,
-  };
-}
-
-function generateCitizendiumDemoContent(topic: string): string {
-  return `# ${topic}
-
-${topic} is a topic that has been the subject of scholarly inquiry and expert analysis across multiple disciplines.
-
-## Overview
-
-The study of ${topic} involves examining its fundamental characteristics, historical development, and contemporary significance. Experts in the field have contributed extensive research and documentation to our understanding of this subject.
-
-## Background
-
-Understanding ${topic} requires consideration of both theoretical frameworks and empirical evidence. The accumulated body of knowledge reflects contributions from researchers, practitioners, and scholars over time.
-
-## Key Aspects
-
-Important elements of ${topic} include:
-
-- **Core principles** - The foundational concepts that define the subject
-- **Research findings** - Evidence-based insights from scholarly investigation
-- **Practical relevance** - Applications and implications in various contexts
-
-## Current Understanding
-
-Contemporary scholarship continues to advance our knowledge of ${topic}, with ongoing research contributing new perspectives and refined understanding. This dynamic field benefits from interdisciplinary approaches and collaborative inquiry.
-
-## Significance
-
-${topic} holds importance for both academic inquiry and practical application, offering insights relevant to multiple areas of human knowledge and endeavor.`;
 }
 
 // ============================================
@@ -1368,138 +831,38 @@ export interface NewWorldArticle {
 }
 
 /**
- * Fetch New World Encyclopedia article content
+ * Fetch New World Encyclopedia article content via server-side API
  * New World Encyclopedia focuses on encyclopedic content with values perspective
+ * Returns null if content not found - allows arena to try different source
  */
 export async function fetchNewWorldContent(topic: string): Promise<NewWorldArticle | null> {
   try {
-    const params = new URLSearchParams({
-      action: 'query',
-      titles: topic,
-      prop: 'extracts|info',
-      exintro: '0',
-      explaintext: '0', // Get HTML to preserve links
-      exsectionformat: 'wiki',
-      inprop: 'url',
-      format: 'json',
-      origin: '*',
-    });
-    
-    const response = await fetch(`${NEWWORLD_API}?${params}`);
+    // Use server-side API to avoid CORS issues
+    const response = await fetch(`/api/newworld?topic=${encodeURIComponent(topic)}`);
     
     if (!response.ok) {
       console.error('New World Encyclopedia API error:', response.status);
-      return generateNewWorldFallback(topic);
+      return null; // Return null so arena can try different source
     }
     
     const data = await response.json();
-    const pages = data.query?.pages;
     
-    if (!pages) {
-      return generateNewWorldFallback(topic);
+    // If notFound, return null so arena can try different source
+    if (data.notFound || (data.error && !data.content) || !data.content) {
+      console.log('New World Encyclopedia: No content found for', topic);
+      return null;
     }
-    
-    const pageId = Object.keys(pages)[0];
-    const page = pages[pageId];
-    
-    if (pageId === '-1' || !page.extract) {
-      // Try search if exact title not found
-      return await searchNewWorld(topic);
-    }
-    
-    // Convert HTML to markdown, including links
-    const markdownContent = convertMediaWikiHtmlToMarkdown(page.title, page.extract, 'https://www.newworldencyclopedia.org');
-    const sanitizedContent = sanitizeContent(markdownContent, 'newworld');
     
     return {
-      title: page.title,
-      content: sanitizedContent,
+      title: data.title || topic,
+      content: sanitizeContent(data.content, 'newworld'),
       source: 'newworld',
-      url: page.fullurl || `https://www.newworldencyclopedia.org/entry/${encodeURIComponent(topic)}`,
+      url: data.url || `https://www.newworldencyclopedia.org/entry/${encodeURIComponent(topic)}`,
     };
   } catch (e) {
     console.error('New World Encyclopedia error:', e);
-    return generateNewWorldFallback(topic);
+    return null; // Return null so arena can try different source
   }
-}
-
-/**
- * Search New World Encyclopedia for a topic
- */
-async function searchNewWorld(topic: string): Promise<NewWorldArticle | null> {
-  try {
-    const params = new URLSearchParams({
-      action: 'query',
-      list: 'search',
-      srsearch: topic,
-      srlimit: '1',
-      format: 'json',
-      origin: '*',
-    });
-    
-    const response = await fetch(`${NEWWORLD_API}?${params}`);
-    
-    if (!response.ok) {
-      return generateNewWorldFallback(topic);
-    }
-    
-    const data = await response.json();
-    const results = data.query?.search;
-    
-    if (!results || results.length === 0) {
-      return generateNewWorldFallback(topic);
-    }
-    
-    // Fetch the found article
-    return fetchNewWorldContent(results[0].title);
-  } catch (e) {
-    console.error('New World Encyclopedia search error:', e);
-    return generateNewWorldFallback(topic);
-  }
-}
-
-function generateNewWorldFallback(topic: string): NewWorldArticle {
-  return {
-    title: topic,
-    content: sanitizeContent(generateNewWorldDemoContent(topic), 'newworld'),
-    source: 'newworld',
-    url: `https://www.newworldencyclopedia.org/entry/${encodeURIComponent(topic)}`,
-  };
-}
-
-function generateNewWorldDemoContent(topic: string): string {
-  return `# ${topic}
-
-${topic} represents an area of knowledge that connects multiple disciplines and perspectives, reflecting the interconnected nature of human understanding.
-
-## Introduction
-
-The exploration of ${topic} encompasses historical, scientific, cultural, and philosophical dimensions. A comprehensive understanding requires examining these various aspects and their interrelationships.
-
-## Historical Development
-
-The history of ${topic} reveals how human understanding has evolved over time. From ancient observations to modern scientific inquiry, each era has contributed unique insights and methodologies to the field.
-
-## Core Concepts
-
-Several fundamental concepts are essential to understanding ${topic}:
-
-- **Foundational principles** - The basic ideas that underpin the subject
-- **Key developments** - Major discoveries and advancements
-- **Interdisciplinary connections** - Links to related fields of study
-
-## Contemporary Perspectives
-
-Modern approaches to ${topic} draw upon diverse methodologies and theoretical frameworks. Current scholarship emphasizes:
-
-- Evidence-based analysis
-- Cross-cultural perspectives
-- Integration of traditional and contemporary knowledge
-- Ethical considerations and implications
-
-## Broader Significance
-
-${topic} holds significance beyond its immediate subject matter, offering insights into broader questions about human knowledge, values, and the nature of understanding itself.`;
 }
 
 /**
@@ -1775,11 +1138,11 @@ export async function fetchContentFromAllSources(
 export const SOURCE_LOGOS: Record<SourceSlug, string> = {
   // Wikipedia puzzle globe logo
   wikipedia: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Wikipedia-logo-v2-en.svg/200px-Wikipedia-logo-v2-en.svg.png',
-  // xAI/Grok logo - TO CUSTOMIZE: add /static/logos/grokipedia.png and change to '/logos/grokipedia.png'
+  // xAI/Grok logo - local file
   grokipedia: '/logos/grokipedia.png',
-  // Britannica thistle logo - TO CUSTOMIZE: add /static/logos/britannica.png and change to '/logos/britannica.png'
-  britannica: '/logos/britannica.webp',  
-// Citizendium logo
+  // Britannica thistle logo - local file
+  britannica: '/logos/britannica.webp',
+  // Citizendium logo
   citizendium: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/Citizendium_Logo.svg/200px-Citizendium_Logo.svg.png',
   // New World Encyclopedia - using a book icon as placeholder
   newworld: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/92/Open_book_nae_02.svg/200px-Open_book_nae_02.svg.png',

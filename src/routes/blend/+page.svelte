@@ -4,6 +4,9 @@
   import { supabase, isSupabaseConfigured } from '$lib/supabaseClient';
   import { authStore, isAuthenticated, currentUser } from '$lib/stores/auth';
   import AuthModal from '$lib/components/AuthModal.svelte';
+  
+  // Accept SvelteKit props to suppress warnings
+  export let data: Record<string, unknown> = {};
   import Markdown from '$lib/components/Markdown.svelte';
   import { 
     fetchContentFromSource, 
@@ -94,6 +97,9 @@
       await loadSavedConfigs();
       await loadUserPreferences();
     }
+    
+    // Check for suggested blend from history page
+    checkForSuggestedBlend();
   });
 
   // React to auth changes
@@ -101,6 +107,63 @@
     loadSavedConfigs();
     loadUserPreferences();
   }
+  
+  function checkForSuggestedBlend() {
+    if (!browser) return;
+    
+    try {
+      const stored = localStorage.getItem('wikiarena_suggested_blend');
+      if (!stored) return;
+      
+      const config = JSON.parse(stored);
+      
+      // Check if it's recent (within last 5 minutes)
+      if (Date.now() - config.timestamp > 5 * 60 * 1000) {
+        localStorage.removeItem('wikiarena_suggested_blend');
+        return;
+      }
+      
+      // Apply the suggested weights
+      if (config.weights && config.enabled) {
+        // Wait a tick for sources to be loaded
+        setTimeout(() => {
+          applySuggestedBlend(config);
+        }, 100);
+      }
+      
+      // Clear it so it doesn't apply again
+      localStorage.removeItem('wikiarena_suggested_blend');
+    } catch (e) {
+      console.error('Error loading suggested blend:', e);
+      localStorage.removeItem('wikiarena_suggested_blend');
+    }
+  }
+  
+  function applySuggestedBlend(config: { weights: Record<string, number>; enabled: Record<string, boolean>; fromHistory: boolean }) {
+    // Apply weights by slug
+    for (const source of sources) {
+      if (config.weights[source.slug] !== undefined) {
+        weights[source.id] = config.weights[source.slug];
+      }
+      if (config.enabled[source.slug] !== undefined) {
+        enabledSources[source.id] = config.enabled[source.slug];
+      }
+    }
+    
+    weights = { ...weights };
+    enabledSources = { ...enabledSources };
+    usePreferenceWeights = true;
+    
+    // Show a toast or notification that suggested blend was applied
+    if (config.fromHistory) {
+      showSuggestedBlendNotification = true;
+      setTimeout(() => {
+        showSuggestedBlendNotification = false;
+      }, 4000);
+    }
+  }
+  
+  let showSuggestedBlendNotification = false;
 
   async function loadSources() {
     if (isSupabaseConfigured) {
@@ -474,8 +537,8 @@
     // Add quality overview if available
     if (qualityAssessment) {
       output += `## Quality Analysis\n\n`;
-      output += `| Source | Quality | Shapley Value | Expected | Accuracy | Readability |\n`;
-      output += `|--------|---------|---------------|----------|----------|-------------|\n`;
+      output += `| Source | Quality | Unique Value | Expected | Accuracy | Readability |\n`;
+      output += `|--------|---------|--------------|----------|----------|-------------|\n`;
       
       for (const sc of validContents) {
         const q = sourceQualities[sc.source.id];
@@ -494,7 +557,7 @@
       output += `---\n\n## ${sc.source.name}\n`;
       output += `*Weight: ${weight}%`;
       if (q) {
-        output += ` | Quality: ${formatQualityScore(q.overallScore)} | Shapley: ${formatShapleyValue(q.shapleyValue)}`;
+        output += ` | Quality: ${formatQualityScore(q.overallScore)} | Unique: ${formatShapleyValue(q.shapleyValue)}`;
       }
       output += `*\n\n`;
       
@@ -727,6 +790,29 @@ ${truncatedContent}`;
 </svelte:head>
 
 <AuthModal bind:open={showAuthModal} />
+
+<!-- Suggested Blend Notification -->
+{#if showSuggestedBlendNotification}
+  <div class="fixed top-4 right-4 z-50 animate-slide-in">
+    <div class="bg-emerald-500/90 backdrop-blur-sm text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      <div>
+        <div class="font-medium">Suggested Blend Applied</div>
+        <div class="text-sm text-emerald-100">Weights set based on your voting preferences</div>
+      </div>
+      <button 
+        class="ml-2 text-emerald-200 hover:text-white"
+        on:click={() => showSuggestedBlendNotification = false}
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+{/if}
 
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
   <!-- Header -->
@@ -1037,7 +1123,13 @@ ${truncatedContent}`;
               {#if qualityAssessment && Object.keys(sourceQualities).length > 0}
                 <div class="mb-4 p-4 rounded-lg bg-gradient-to-br from-slate-800/50 to-slate-900/50 border border-slate-700/30">
                   <div class="flex items-center justify-between mb-3">
-                    <h3 class="text-sm font-medium text-slate-300">Quality Analysis (Shapley Values)</h3>
+                    <div class="group relative">
+                      <h3 class="text-sm font-medium text-slate-300 cursor-help border-b border-dotted border-slate-600">Source Quality Analysis</h3>
+                      <!-- Tooltip -->
+                      <div class="absolute top-full left-0 mt-2 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 w-64 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 shadow-xl">
+                        <strong class="text-slate-200">Unique Value</strong> shows how much distinctive information each source contributes. Sources with high unique value add content the others don't have.
+                      </div>
+                    </div>
                     <div class="text-xs text-slate-500">
                       Coalition: <span class="text-amber-400 font-semibold">{formatQualityScore(qualityAssessment.coalitionValue)}</span>
                     </div>
@@ -1057,7 +1149,7 @@ ${truncatedContent}`;
                             <div class="font-semibold {tier.color}">{formatQualityScore(quality.overallScore)}</div>
                           </div>
                           <div>
-                            <div class="text-slate-500">Shapley</div>
+                            <div class="text-slate-500">Unique</div>
                             <div class="font-semibold {quality.shapleyValue >= 0 ? 'text-emerald-400' : 'text-red-400'}">{formatShapleyValue(quality.shapleyValue)}</div>
                           </div>
                           <div>
@@ -1088,7 +1180,7 @@ ${truncatedContent}`;
                     {#if quality}
                       <div class="flex items-center gap-3 mb-3 text-xs">
                         <span class="text-slate-500">Quality: <span class="{getQualityTier(quality.overallScore).color}">{formatQualityScore(quality.overallScore)}</span></span>
-                        <span class="text-slate-500">Shapley: <span class="{quality.shapleyValue >= 0 ? 'text-emerald-400' : 'text-red-400'}">{formatShapleyValue(quality.shapleyValue)}</span></span>
+                        <span class="text-slate-500">Unique: <span class="{quality.shapleyValue >= 0 ? 'text-emerald-400' : 'text-red-400'}">{formatShapleyValue(quality.shapleyValue)}</span></span>
                       </div>
                     {/if}
                     <div class="text-xs text-slate-400 max-h-48 overflow-y-auto scrollbar-thin">

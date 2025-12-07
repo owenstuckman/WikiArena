@@ -467,7 +467,9 @@ function convertSingleTableToMarkdown(tableHtml: string): string {
     while (row.length < maxCols) {
       row.push('');
     }
-    return '| ' + row.join(' | ') + ' |';
+    // Ensure empty cells have at least a space to avoid || issues
+    const cells = row.map(cell => cell.trim() || ' ');
+    return '| ' + cells.join(' | ') + ' |';
   }).join('\n');
   
   return '\n\n' + mdTable + '\n\n';
@@ -609,97 +611,208 @@ export async function getRandomWikipediaArticle(): Promise<string | null> {
 }
 
 // ============================================
-// GROKIPEDIA (xAI API)
+// GROKIPEDIA (Scraping from grokipedia.com)
 // ============================================
 
-const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
+const GROKIPEDIA_BASE_URL = 'https://grokipedia.com/page';
 
 export interface GrokipediaArticle {
   title: string;
   content: string;
   source: 'grokipedia';
+  url?: string;
 }
 
 /**
- * Fetch Grokipedia content via xAI API
+ * Fetch Grokipedia content by scraping grokipedia.com
  */
 export async function fetchGrokipediaContent(
   topic: string,
   apiKey?: string
 ): Promise<GrokipediaArticle | null> {
-  if (!apiKey) {
-    return {
-      title: topic,
-      content: sanitizeContent(generateGrokipediaDemoContent(topic), 'grokipedia'),
-      source: 'grokipedia',
-    };
-  }
-
   try {
-    const response = await fetch(XAI_API_URL, {
-      method: 'POST',
+    // Format topic for URL (replace spaces with underscores)
+    const formattedTopic = topic.trim().replace(/\s+/g, '_');
+    const url = `${GROKIPEDIA_BASE_URL}/${encodeURIComponent(formattedTopic)}`;
+    
+    const response = await fetch(url, {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+        'User-Agent': 'WikiArena/1.0 (Knowledge Comparison Platform)',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
-      body: JSON.stringify({
-        model: 'grok-2-latest',
-        messages: [
-          {
-            role: 'system',
-            content: `You are writing an encyclopedia article. Write a comprehensive, factual, well-structured article about the given topic using markdown formatting.
-
-IMPORTANT RULES:
-- Do NOT mention your name, source, or that you are an AI
-- Do NOT include phrases like "this article" or "this entry"
-- Write as if you are a neutral, anonymous encyclopedia
-- Focus purely on factual information about the topic
-
-Structure your response with:
-- A title as # heading
-- An introduction paragraph
-- Multiple ## sections covering different aspects
-- Key facts and information
-- Historical context if relevant
-- Current developments or applications
-
-Write in an engaging, encyclopedic style.`
-          },
-          {
-            role: 'user',
-            content: `Write an encyclopedia article about: ${topic}`
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 2000,
-      }),
     });
 
     if (!response.ok) {
-      console.error('Grok API error:', response.status);
-      return {
-        title: topic,
-        content: sanitizeContent(generateGrokipediaDemoContent(topic), 'grokipedia'),
-        source: 'grokipedia',
-      };
+      console.error('Grokipedia fetch error:', response.status);
+      // Try alternative URL formats
+      return await tryAlternativeGrokipediaUrls(topic);
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || generateGrokipediaDemoContent(topic);
-
-    return {
-      title: topic,
-      content: sanitizeContent(content, 'grokipedia'),
-      source: 'grokipedia',
-    };
+    const html = await response.text();
+    const content = parseGrokipediaHtml(html, topic);
+    
+    if (content && content.length > 100) {
+      return {
+        title: topic,
+        content: sanitizeContent(content, 'grokipedia'),
+        source: 'grokipedia',
+        url: url,
+      };
+    }
+    
+    // If content is too short, try alternative formats
+    return await tryAlternativeGrokipediaUrls(topic);
   } catch (e) {
     console.error('Grokipedia error:', e);
     return {
       title: topic,
       content: sanitizeContent(generateGrokipediaDemoContent(topic), 'grokipedia'),
       source: 'grokipedia',
+      url: `${GROKIPEDIA_BASE_URL}/${encodeURIComponent(topic)}`,
     };
   }
+}
+
+/**
+ * Try alternative URL formats for Grokipedia
+ */
+async function tryAlternativeGrokipediaUrls(topic: string): Promise<GrokipediaArticle | null> {
+  const variations = [
+    topic.replace(/\s+/g, '_'),                    // Replace spaces with underscores
+    topic.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('_'), // Title Case
+    topic.toLowerCase().replace(/\s+/g, '_'),      // lowercase with underscores
+    topic,                                          // Original
+  ];
+  
+  for (const variant of variations) {
+    try {
+      const url = `${GROKIPEDIA_BASE_URL}/${encodeURIComponent(variant)}`;
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'WikiArena/1.0 (Knowledge Comparison Platform)',
+        },
+      });
+      
+      if (response.ok) {
+        const html = await response.text();
+        const content = parseGrokipediaHtml(html, topic);
+        
+        if (content && content.length > 100) {
+          return {
+            title: topic,
+            content: sanitizeContent(content, 'grokipedia'),
+            source: 'grokipedia',
+            url: url,
+          };
+        }
+      }
+    } catch (e) {
+      // Continue to next variation
+    }
+  }
+  
+  // Return demo content if all attempts fail
+  return {
+    title: topic,
+    content: sanitizeContent(generateGrokipediaDemoContent(topic), 'grokipedia'),
+    source: 'grokipedia',
+    url: `${GROKIPEDIA_BASE_URL}/${encodeURIComponent(topic)}`,
+  };
+}
+
+/**
+ * Parse HTML from Grokipedia page and extract content as markdown
+ */
+function parseGrokipediaHtml(html: string, topic: string): string {
+  let content = '';
+  
+  // Try to find the main content section
+  // Common patterns for article content
+  const contentPatterns = [
+    /<article[^>]*>([\s\S]*?)<\/article>/i,
+    /<main[^>]*>([\s\S]*?)<\/main>/i,
+    /<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*class="[^"]*article[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*class="[^"]*prose[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*class="[^"]*post-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*class="[^"]*page-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+  ];
+  
+  for (const pattern of contentPatterns) {
+    const match = html.match(pattern);
+    if (match && match[1] && match[1].length > 200) {
+      content = match[1];
+      break;
+    }
+  }
+  
+  // If no pattern matched, try to get body content
+  if (!content) {
+    const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    if (bodyMatch) {
+      content = bodyMatch[1];
+    }
+  }
+  
+  if (!content) return '';
+  
+  // Convert HTML to markdown-like text
+  let markdown = `# ${topic}\n\n`;
+  
+  // Remove script and style tags
+  content = content.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+  content = content.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+  content = content.replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '');
+  content = content.replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '');
+  content = content.replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '');
+  content = content.replace(/<aside[^>]*>[\s\S]*?<\/aside>/gi, '');
+  
+  // Convert headings
+  content = content.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
+  content = content.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n');
+  content = content.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n');
+  content = content.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '\n#### $1\n');
+  
+  // Convert paragraphs
+  content = content.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n$1\n');
+  
+  // Convert lists
+  content = content.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1');
+  content = content.replace(/<\/?[uo]l[^>]*>/gi, '\n');
+  
+  // Convert bold and italic
+  content = content.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '**$1**');
+  content = content.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, '**$1**');
+  content = content.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '*$1*');
+  content = content.replace(/<i[^>]*>([\s\S]*?)<\/i>/gi, '*$1*');
+  
+  // Convert links (keep them)
+  content = content.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+  
+  // Convert line breaks
+  content = content.replace(/<br\s*\/?>/gi, '\n');
+  
+  // Remove remaining HTML tags
+  content = content.replace(/<[^>]+>/g, '');
+  
+  // Decode HTML entities
+  content = decodeHtmlEntities(content);
+  
+  // Clean up whitespace
+  content = content.replace(/\n{3,}/g, '\n\n');
+  content = content.replace(/^\s+|\s+$/gm, '');
+  content = content.trim();
+  
+  // Don't include the title again if it's at the start
+  if (content.toLowerCase().startsWith(topic.toLowerCase())) {
+    const firstNewline = content.indexOf('\n');
+    if (firstNewline > 0 && firstNewline < topic.length + 20) {
+      content = content.substring(firstNewline).trim();
+    }
+  }
+  
+  return markdown + content;
 }
 
 function generateGrokipediaDemoContent(topic: string): string {
@@ -800,6 +913,328 @@ Understanding these connections helps illuminate the broader significance of thi
 }
 
 // ============================================
+// CITIZENDIUM
+// ============================================
+
+const CITIZENDIUM_API = 'https://citizendium.org/wiki/api.php';
+
+export interface CitizendiumArticle {
+  title: string;
+  content: string;
+  source: 'citizendium';
+  url?: string;
+}
+
+/**
+ * Fetch Citizendium article content
+ * Citizendium is a MediaWiki-based expert-guided encyclopedia
+ */
+export async function fetchCitizendiumContent(topic: string): Promise<CitizendiumArticle | null> {
+  try {
+    const params = new URLSearchParams({
+      action: 'query',
+      titles: topic,
+      prop: 'extracts|info',
+      exintro: '0',
+      explaintext: '1',
+      exsectionformat: 'wiki',
+      inprop: 'url',
+      format: 'json',
+      origin: '*',
+    });
+    
+    const response = await fetch(`${CITIZENDIUM_API}?${params}`);
+    
+    if (!response.ok) {
+      console.error('Citizendium API error:', response.status);
+      return generateCitizendiumFallback(topic);
+    }
+    
+    const data = await response.json();
+    const pages = data.query?.pages;
+    
+    if (!pages) {
+      return generateCitizendiumFallback(topic);
+    }
+    
+    const pageId = Object.keys(pages)[0];
+    const page = pages[pageId];
+    
+    if (pageId === '-1' || !page.extract) {
+      // Try search if exact title not found
+      return await searchCitizendium(topic);
+    }
+    
+    const formattedContent = formatMediaWikiContent(page.title, page.extract);
+    const sanitizedContent = sanitizeContent(formattedContent, 'citizendium');
+    
+    return {
+      title: page.title,
+      content: sanitizedContent,
+      source: 'citizendium',
+      url: page.fullurl || `https://citizendium.org/wiki/${encodeURIComponent(topic)}`,
+    };
+  } catch (e) {
+    console.error('Citizendium error:', e);
+    return generateCitizendiumFallback(topic);
+  }
+}
+
+/**
+ * Search Citizendium for a topic
+ */
+async function searchCitizendium(topic: string): Promise<CitizendiumArticle | null> {
+  try {
+    const params = new URLSearchParams({
+      action: 'query',
+      list: 'search',
+      srsearch: topic,
+      srlimit: '1',
+      format: 'json',
+      origin: '*',
+    });
+    
+    const response = await fetch(`${CITIZENDIUM_API}?${params}`);
+    
+    if (!response.ok) {
+      return generateCitizendiumFallback(topic);
+    }
+    
+    const data = await response.json();
+    const results = data.query?.search;
+    
+    if (!results || results.length === 0) {
+      return generateCitizendiumFallback(topic);
+    }
+    
+    // Fetch the found article
+    return fetchCitizendiumContent(results[0].title);
+  } catch (e) {
+    console.error('Citizendium search error:', e);
+    return generateCitizendiumFallback(topic);
+  }
+}
+
+function generateCitizendiumFallback(topic: string): CitizendiumArticle {
+  return {
+    title: topic,
+    content: sanitizeContent(generateCitizendiumDemoContent(topic), 'citizendium'),
+    source: 'citizendium',
+    url: `https://citizendium.org/wiki/${encodeURIComponent(topic)}`,
+  };
+}
+
+function generateCitizendiumDemoContent(topic: string): string {
+  return `# ${topic}
+
+${topic} is a topic that has been the subject of scholarly inquiry and expert analysis across multiple disciplines.
+
+## Overview
+
+The study of ${topic} involves examining its fundamental characteristics, historical development, and contemporary significance. Experts in the field have contributed extensive research and documentation to our understanding of this subject.
+
+## Background
+
+Understanding ${topic} requires consideration of both theoretical frameworks and empirical evidence. The accumulated body of knowledge reflects contributions from researchers, practitioners, and scholars over time.
+
+## Key Aspects
+
+Important elements of ${topic} include:
+
+- **Core principles** - The foundational concepts that define the subject
+- **Research findings** - Evidence-based insights from scholarly investigation
+- **Practical relevance** - Applications and implications in various contexts
+
+## Current Understanding
+
+Contemporary scholarship continues to advance our knowledge of ${topic}, with ongoing research contributing new perspectives and refined understanding. This dynamic field benefits from interdisciplinary approaches and collaborative inquiry.
+
+## Significance
+
+${topic} holds importance for both academic inquiry and practical application, offering insights relevant to multiple areas of human knowledge and endeavor.`;
+}
+
+// ============================================
+// NEW WORLD ENCYCLOPEDIA
+// ============================================
+
+const NEWWORLD_API = 'https://www.newworldencyclopedia.org/api.php';
+
+export interface NewWorldArticle {
+  title: string;
+  content: string;
+  source: 'newworld';
+  url?: string;
+}
+
+/**
+ * Fetch New World Encyclopedia article content
+ * New World Encyclopedia focuses on encyclopedic content with values perspective
+ */
+export async function fetchNewWorldContent(topic: string): Promise<NewWorldArticle | null> {
+  try {
+    const params = new URLSearchParams({
+      action: 'query',
+      titles: topic,
+      prop: 'extracts|info',
+      exintro: '0',
+      explaintext: '1',
+      exsectionformat: 'wiki',
+      inprop: 'url',
+      format: 'json',
+      origin: '*',
+    });
+    
+    const response = await fetch(`${NEWWORLD_API}?${params}`);
+    
+    if (!response.ok) {
+      console.error('New World Encyclopedia API error:', response.status);
+      return generateNewWorldFallback(topic);
+    }
+    
+    const data = await response.json();
+    const pages = data.query?.pages;
+    
+    if (!pages) {
+      return generateNewWorldFallback(topic);
+    }
+    
+    const pageId = Object.keys(pages)[0];
+    const page = pages[pageId];
+    
+    if (pageId === '-1' || !page.extract) {
+      // Try search if exact title not found
+      return await searchNewWorld(topic);
+    }
+    
+    const formattedContent = formatMediaWikiContent(page.title, page.extract);
+    const sanitizedContent = sanitizeContent(formattedContent, 'newworld');
+    
+    return {
+      title: page.title,
+      content: sanitizedContent,
+      source: 'newworld',
+      url: page.fullurl || `https://www.newworldencyclopedia.org/entry/${encodeURIComponent(topic)}`,
+    };
+  } catch (e) {
+    console.error('New World Encyclopedia error:', e);
+    return generateNewWorldFallback(topic);
+  }
+}
+
+/**
+ * Search New World Encyclopedia for a topic
+ */
+async function searchNewWorld(topic: string): Promise<NewWorldArticle | null> {
+  try {
+    const params = new URLSearchParams({
+      action: 'query',
+      list: 'search',
+      srsearch: topic,
+      srlimit: '1',
+      format: 'json',
+      origin: '*',
+    });
+    
+    const response = await fetch(`${NEWWORLD_API}?${params}`);
+    
+    if (!response.ok) {
+      return generateNewWorldFallback(topic);
+    }
+    
+    const data = await response.json();
+    const results = data.query?.search;
+    
+    if (!results || results.length === 0) {
+      return generateNewWorldFallback(topic);
+    }
+    
+    // Fetch the found article
+    return fetchNewWorldContent(results[0].title);
+  } catch (e) {
+    console.error('New World Encyclopedia search error:', e);
+    return generateNewWorldFallback(topic);
+  }
+}
+
+function generateNewWorldFallback(topic: string): NewWorldArticle {
+  return {
+    title: topic,
+    content: sanitizeContent(generateNewWorldDemoContent(topic), 'newworld'),
+    source: 'newworld',
+    url: `https://www.newworldencyclopedia.org/entry/${encodeURIComponent(topic)}`,
+  };
+}
+
+function generateNewWorldDemoContent(topic: string): string {
+  return `# ${topic}
+
+${topic} represents an area of knowledge that connects multiple disciplines and perspectives, reflecting the interconnected nature of human understanding.
+
+## Introduction
+
+The exploration of ${topic} encompasses historical, scientific, cultural, and philosophical dimensions. A comprehensive understanding requires examining these various aspects and their interrelationships.
+
+## Historical Development
+
+The history of ${topic} reveals how human understanding has evolved over time. From ancient observations to modern scientific inquiry, each era has contributed unique insights and methodologies to the field.
+
+## Core Concepts
+
+Several fundamental concepts are essential to understanding ${topic}:
+
+- **Foundational principles** - The basic ideas that underpin the subject
+- **Key developments** - Major discoveries and advancements
+- **Interdisciplinary connections** - Links to related fields of study
+
+## Contemporary Perspectives
+
+Modern approaches to ${topic} draw upon diverse methodologies and theoretical frameworks. Current scholarship emphasizes:
+
+- Evidence-based analysis
+- Cross-cultural perspectives
+- Integration of traditional and contemporary knowledge
+- Ethical considerations and implications
+
+## Broader Significance
+
+${topic} holds significance beyond its immediate subject matter, offering insights into broader questions about human knowledge, values, and the nature of understanding itself.`;
+}
+
+/**
+ * Format MediaWiki content (shared helper for Citizendium and New World)
+ */
+function formatMediaWikiContent(title: string, extract: string): string {
+  let content = `# ${title}\n\n`;
+  
+  // Process the extract - convert section headers
+  const lines = extract.split('\n');
+  let currentSection = '';
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    
+    // Check for section headers (MediaWiki format: == Section ==)
+    const sectionMatch = trimmed.match(/^(=+)\s*(.+?)\s*=+$/);
+    if (sectionMatch) {
+      const level = Math.min(sectionMatch[1].length, 3);
+      const sectionTitle = sectionMatch[2];
+      // Skip certain sections
+      if (/^(References|See also|External links|Notes|Further reading|Bibliography)$/i.test(sectionTitle)) {
+        currentSection = 'skip';
+        continue;
+      }
+      currentSection = sectionTitle;
+      content += '\n' + '#'.repeat(level + 1) + ' ' + sectionTitle + '\n\n';
+    } else if (currentSection !== 'skip' && trimmed) {
+      content += trimmed + '\n\n';
+    }
+  }
+  
+  return content.trim();
+}
+
+// ============================================
 // CONTENT SANITIZATION
 // ============================================
 
@@ -838,6 +1273,19 @@ function sanitizeContent(content: string, source: SourceSlug): string {
     /\bsince 1768\b/gi,
     /\bexpert-written content\b/gi,
     /\btrusted encyclopedia\b/gi,
+    
+    // Citizendium references
+    /\bCitizendium\b/gi,
+    /\bCitizendium['']s\b/gi,
+    /\bthe Citizens[''] Compendium\b/gi,
+    /\bexpert-guided\b/gi,
+    /\bLarry Sanger\b/gi,
+    
+    // New World Encyclopedia references
+    /\bNew World Encyclopedia\b/gi,
+    /\bnewworldencyclopedia\b/gi,
+    /\bParagon House\b/gi,
+    /\bUnification Movement\b/gi,
     
     // Generic self-references
     /\bthis encyclopedia\b/gi,
@@ -899,7 +1347,7 @@ function sanitizeContent(content: string, source: SourceSlug): string {
 // UNIFIED CONTENT FETCHER
 // ============================================
 
-export type SourceSlug = 'wikipedia' | 'grokipedia' | 'britannica';
+export type SourceSlug = 'wikipedia' | 'grokipedia' | 'britannica' | 'citizendium' | 'newworld';
 
 export interface SourceContent {
   source: SourceSlug;
@@ -940,6 +1388,7 @@ export async function fetchContentFromSource(
         sourceName: 'Grokipedia',
         title: article.title,
         content: article.content,
+        url: article.url,
       };
     }
     
@@ -949,6 +1398,30 @@ export async function fetchContentFromSource(
       return {
         source: 'britannica',
         sourceName: 'Encyclopedia Britannica',
+        title: article.title,
+        content: article.content,
+        url: article.url,
+      };
+    }
+    
+    case 'citizendium': {
+      const article = await fetchCitizendiumContent(topic);
+      if (!article) return null;
+      return {
+        source: 'citizendium',
+        sourceName: 'Citizendium',
+        title: article.title,
+        content: article.content,
+        url: article.url,
+      };
+    }
+    
+    case 'newworld': {
+      const article = await fetchNewWorldContent(topic);
+      if (!article) return null;
+      return {
+        source: 'newworld',
+        sourceName: 'New World Encyclopedia',
         title: article.title,
         content: article.content,
         url: article.url,
@@ -986,11 +1459,15 @@ export async function fetchContentFromAllSources(
  *    - /static/logos/grokipedia.png (or .svg)
  *    - /static/logos/britannica.png (or .svg)
  *    - /static/logos/wikipedia.png (or .svg)
+ *    - /static/logos/citizendium.png (or .svg)
+ *    - /static/logos/newworld.png (or .svg)
  * 
  * 2. Update the URLs below to use local paths:
  *    - grokipedia: '/logos/grokipedia.png'
  *    - britannica: '/logos/britannica.png'
  *    - wikipedia: '/logos/wikipedia.png'
+ *    - citizendium: '/logos/citizendium.png'
+ *    - newworld: '/logos/newworld.png'
  * 
  * Note: Files in /static are served at the root URL path
  */
@@ -1000,7 +1477,11 @@ export const SOURCE_LOGOS: Record<SourceSlug, string> = {
   // xAI/Grok logo - TO CUSTOMIZE: add /static/logos/grokipedia.png and change to '/logos/grokipedia.png'
   grokipedia: '/logos/grokipedia.png',
   // Britannica thistle logo - TO CUSTOMIZE: add /static/logos/britannica.png and change to '/logos/britannica.png'
-  britannica: '/logos/britannica.webp',
+  britannica: '/logos/britannica.webp',  
+// Citizendium logo
+  citizendium: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/Citizendium_Logo.svg/200px-Citizendium_Logo.svg.png',
+  // New World Encyclopedia - using a book icon as placeholder
+  newworld: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/92/Open_book_nae_02.svg/200px-Open_book_nae_02.svg.png',
 };
 
 /**
@@ -1018,6 +1499,8 @@ export function getSourceEmoji(slug: SourceSlug): string {
     case 'wikipedia': return '📚';
     case 'grokipedia': return '🤖';
     case 'britannica': return '📖';
+    case 'citizendium': return '🎓';
+    case 'newworld': return '🌐';
     default: return '📄';
   }
 }
@@ -1030,6 +1513,8 @@ export function getSourceColor(slug: SourceSlug): string {
     case 'wikipedia': return 'text-blue-400';
     case 'grokipedia': return 'text-purple-400';
     case 'britannica': return 'text-amber-400';
+    case 'citizendium': return 'text-emerald-400';
+    case 'newworld': return 'text-cyan-400';
     default: return 'text-slate-400';
   }
 }
@@ -1042,6 +1527,8 @@ export function getSourceBgColor(slug: SourceSlug): string {
     case 'wikipedia': return 'bg-blue-500/20';
     case 'grokipedia': return 'bg-purple-500/20';
     case 'britannica': return 'bg-amber-500/20';
+    case 'citizendium': return 'bg-emerald-500/20';
+    case 'newworld': return 'bg-cyan-500/20';
     default: return 'bg-slate-500/20';
   }
 }

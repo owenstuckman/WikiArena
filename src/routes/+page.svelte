@@ -49,12 +49,9 @@
         </div>
 
         <!-- Title -->
-        <div class="flex items-center justify-center gap-4 mb-4">
-          <img src="/logo.png" alt="WikiArena" class="w-16 h-16 sm:w-20 sm:h-20 object-contain" />
-          <h1 class="text-5xl sm:text-6xl font-bold tracking-tight">
-            <span class="text-gradient">WikiArena</span>
-          </h1>
-        </div>
+        <h1 class="text-5xl sm:text-6xl font-bold tracking-tight mb-4">
+          <span class="text-gradient">WikiArena</span>
+        </h1>
         
         <p class="text-lg sm:text-xl text-slate-400 max-w-2xl mx-auto mb-10">
           Compare knowledge sources head-to-head. Vote for your preference.

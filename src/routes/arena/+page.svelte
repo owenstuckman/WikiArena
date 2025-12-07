@@ -65,10 +65,6 @@
   let qualityAssessment: QualityAssessment | null = null;
   let leftQuality: SourceQuality | null = null;
   let rightQuality: SourceQuality | null = null;
-  
-  // Link toast
-  let showLinkToast = false;
-  let linkToastTimeout: ReturnType<typeof setTimeout>;
 
   // Content truncation settings
   const TRUNCATE_LENGTH = 2000;
@@ -107,6 +103,8 @@
         { id: 'demo-wiki', name: 'Wikipedia', slug: 'wikipedia', description: 'The free encyclopedia', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
         { id: 'demo-grok', name: 'Grokipedia', slug: 'grokipedia', description: 'AI-powered knowledge', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
         { id: 'demo-brit', name: 'Encyclopedia Britannica', slug: 'britannica', description: 'Trusted since 1768', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
+        { id: 'demo-citizen', name: 'Citizendium', slug: 'citizendium', description: 'Expert-guided encyclopedia', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
+        { id: 'demo-newworld', name: 'New World Encyclopedia', slug: 'newworld', description: 'Values-based encyclopedia', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
       ];
     }
   }
@@ -320,15 +318,6 @@
     rightQuality = null;
   }
 
-  function handleLinkClick(e: CustomEvent<{ href: string }>) {
-    // Show toast message
-    clearTimeout(linkToastTimeout);
-    showLinkToast = true;
-    linkToastTimeout = setTimeout(() => {
-      showLinkToast = false;
-    }, 3000);
-  }
-
   function calculateQualityMetrics() {
     if (!leftDisplay || !rightDisplay) return;
     
@@ -540,8 +529,6 @@
           <div class="flex-1 overflow-y-auto max-h-[60vh] scrollbar-thin">
             <Markdown 
               content={getDisplayContent(leftDisplay.content.content, contentExpanded.left)}
-              disableLinks={true}
-              on:linkclick={handleLinkClick}
             />
           </div>
           
@@ -569,8 +556,6 @@
           <div class="flex-1 overflow-y-auto max-h-[60vh] scrollbar-thin">
             <Markdown 
               content={getDisplayContent(rightDisplay.content.content, contentExpanded.right)}
-              disableLinks={true}
-              on:linkclick={handleLinkClick}
             />
           </div>
           
@@ -872,38 +857,6 @@
   {/if}
 </div>
 
-<!-- Link Disabled Toast -->
-{#if showLinkToast}
-  <div 
-    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-fade-in-up"
-  >
-    <div class="px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl shadow-lg flex items-center gap-3">
-      <div class="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
-        <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
-        </svg>
-      </div>
-      <div>
-        <div class="text-sm font-medium text-white">Links disabled during comparison</div>
-        <div class="text-xs text-slate-400">Vote first to reveal sources and enable links</div>
-      </div>
-    </div>
-  </div>
-{/if}
-
 <style>
-  @keyframes fade-in-up {
-    from {
-      opacity: 0;
-      transform: translate(-50%, 10px);
-    }
-    to {
-      opacity: 1;
-      transform: translate(-50%, 0);
-    }
-  }
-  
-  .animate-fade-in-up {
-    animation: fade-in-up 0.3s ease-out;
-  }
+  /* Empty for now - can add arena-specific styles here */
 </style>

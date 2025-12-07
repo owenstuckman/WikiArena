@@ -64,6 +64,44 @@ export const DEMO_SOURCES: Source[] = [
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
+  {
+    id: 'source-citizendium',
+    name: 'Citizendium',
+    slug: 'citizendium',
+    description: 'Expert-guided encyclopedia founded by Wikipedia co-founder. Emphasizes accuracy and expert review.',
+    api_endpoint: null,
+    api_config: {},
+    logo_url: null,
+    is_active: true,
+    rating: 1495,
+    rating_deviation: 110,
+    volatility: 0.06,
+    total_matches: 156,
+    total_wins: 82,
+    total_losses: 64,
+    total_ties: 10,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'source-newworld',
+    name: 'New World Encyclopedia',
+    slug: 'newworld',
+    description: 'Encyclopedia with editorial oversight providing encyclopedic content with contextual perspectives.',
+    api_endpoint: null,
+    api_config: {},
+    logo_url: null,
+    is_active: true,
+    rating: 1478,
+    rating_deviation: 115,
+    volatility: 0.06,
+    total_matches: 142,
+    total_wins: 71,
+    total_losses: 62,
+    total_ties: 9,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
 ];
 
 // Mock topics
@@ -120,6 +158,38 @@ Since the development of the digital computer in the 1940s, it has been demonstr
 ## Origins
 
 The field of AI research was founded at a workshop held on the campus of Dartmouth College during the summer of 1956. Those who attended would become the leaders of AI research for decades.`,
+
+    citizendium: `# Artificial Intelligence
+
+Artificial intelligence (AI) encompasses the development of computer systems capable of performing tasks that typically require human intelligence. This includes learning from experience, understanding language, recognizing patterns, and making decisions.
+
+## Foundations
+
+The theoretical foundations of AI draw from multiple disciplines including mathematics, cognitive science, philosophy, and computer science. Researchers have developed various approaches to creating intelligent systems, ranging from symbolic reasoning to statistical learning.
+
+## Expert Perspectives
+
+Leading researchers in the field have identified key challenges and opportunities in AI development. The balance between capability and safety remains a central concern, as does the need for transparency in AI decision-making processes.
+
+## Current Applications
+
+AI systems are now deployed across numerous domains, from healthcare diagnostics to autonomous vehicles. Each application area presents unique challenges that require careful consideration of both technical and ethical factors.`,
+
+    newworld: `# Artificial Intelligence
+
+Artificial intelligence represents one of humanity's most ambitious technological endeavors—the attempt to create machines capable of intelligent behavior. This field raises profound questions about the nature of intelligence, consciousness, and what it means to be human.
+
+## Conceptual Framework
+
+Understanding AI requires grappling with fundamental questions about intelligence itself. Philosophers and scientists have long debated whether machine intelligence is truly comparable to human cognition or represents something fundamentally different.
+
+## Historical Development
+
+The development of AI has been shaped by both technological advances and shifting perspectives on intelligence. From early optimism about achieving human-level AI to more recent focus on narrow applications, the field has evolved considerably.
+
+## Broader Implications
+
+AI development has implications that extend far beyond technology, touching on questions of employment, privacy, autonomy, and the future of human society. These considerations inform ongoing discussions about responsible AI development.`,
   },
   'climate-change': {
     wikipedia: `# Climate Change
@@ -158,6 +228,38 @@ The atmosphere is a dynamic fluid that is continually in motion. Both its physic
 ## Historical Evidence
 
 Since the mid-20th century, scientists have been collecting detailed observations of various weather phenomena. These meteorological records, combined with geological evidence for climate conditions in the past, show that Earth's climate has changed substantially throughout its history.`,
+
+    citizendium: `# Climate Change
+
+Climate change refers to significant, long-term changes in global or regional climate patterns. The current period of climate change is characterized by rapid warming attributed primarily to human activities, particularly the emission of greenhouse gases.
+
+## Scientific Understanding
+
+The scientific understanding of climate change is based on multiple lines of evidence, including direct temperature measurements, ice core records, ocean heat content data, and climate modeling. Expert consensus holds that human activities are the dominant cause of observed warming since the mid-20th century.
+
+## Impacts and Projections
+
+Climate scientists have documented a range of impacts including rising temperatures, changing precipitation patterns, sea level rise, and increasing frequency of extreme weather events. Projections indicate these trends will continue and intensify without significant emissions reductions.
+
+## Policy Responses
+
+International efforts to address climate change include the Paris Agreement and various national and regional policies aimed at reducing greenhouse gas emissions and adapting to climate impacts.`,
+
+    newworld: `# Climate Change
+
+Climate change represents one of the most significant challenges facing human civilization. Understanding this phenomenon requires consideration of both scientific evidence and the broader implications for society and the natural world.
+
+## Earth System Perspective
+
+Earth's climate has always been dynamic, responding to various natural factors over geological time. However, the current period of change is distinguished by its rapidity and clear connection to human activities, particularly the burning of fossil fuels.
+
+## Human Dimensions
+
+Climate change intersects with numerous aspects of human society, including agriculture, health, migration, and economic development. These connections highlight the importance of considering climate change within broader social and ethical frameworks.
+
+## Future Pathways
+
+The future trajectory of climate change depends on choices made by individuals, communities, and nations. Understanding the range of possible futures and the actions that influence them is essential for informed decision-making.`,
   },
   'quantum-computing': {
     wikipedia: `# Quantum Computing
@@ -202,6 +304,38 @@ The fundamental unit of classical computing is the bit, which can be either 0 or
 ## Origins and Development
 
 The concept of quantum computing was first explored in the 1980s by physicist Richard Feynman, who proposed that a computer based on quantum mechanics could simulate physical processes that classical computers could not efficiently model. Since then, researchers have made significant progress in developing practical quantum computing systems.`,
+
+    citizendium: `# Quantum Computing
+
+Quantum computing is an emerging field of computation that exploits quantum mechanical phenomena to perform calculations. Unlike classical computers, quantum computers use quantum bits (qubits) that can exist in superposition states, potentially offering exponential speedups for certain computational problems.
+
+## Theoretical Foundations
+
+The theoretical foundations of quantum computing draw on quantum mechanics, computer science, and information theory. Key concepts include superposition, entanglement, and quantum interference, which together enable computational approaches impossible with classical systems.
+
+## Technical Challenges
+
+Building practical quantum computers presents significant technical challenges, including maintaining quantum coherence, implementing error correction, and scaling up the number of qubits. Researchers are pursuing multiple approaches including superconducting circuits, trapped ions, and photonic systems.
+
+## Potential Applications
+
+Quantum computers may eventually solve problems intractable for classical computers, including molecular simulation for drug discovery, optimization problems, and cryptographic applications. However, experts caution that practical quantum advantage for real-world problems remains a work in progress.`,
+
+    newworld: `# Quantum Computing
+
+Quantum computing represents a fundamental shift in how information can be processed. By harnessing the strange properties of quantum mechanics, these systems promise capabilities that transcend the limits of classical computation.
+
+## Conceptual Basis
+
+Understanding quantum computing requires grappling with concepts that challenge everyday intuition. The quantum world operates by different rules than the classical world we experience, allowing for phenomena like superposition and entanglement that have no classical analog.
+
+## Historical Context
+
+The development of quantum computing reflects broader trends in physics and computer science. The field emerged from theoretical insights in the 1980s and has since progressed through phases of theoretical development, experimental proof-of-concept, and now early commercialization.
+
+## Implications
+
+Quantum computing has implications that extend beyond pure computation, touching on questions of what is computable, the nature of physical reality, and the future of information technology. These considerations inform ongoing discussions about the societal impact of this emerging technology.`,
   },
 };
 
@@ -304,6 +438,50 @@ Contemporary perspectives reflect both traditional scholarship and cutting-edge 
 ## Significance
 
 The practical applications and implications of ${topicTitle} extend across various domains, influencing education, research, and broader society.`;
+  } else if (sourceSlug === 'citizendium') {
+    return `# ${topicTitle}
+
+${topicTitle} is a topic that has been carefully examined and documented through expert-guided research and review processes.
+
+## Overview
+
+Understanding ${topicTitle} requires a balanced examination of established facts and emerging knowledge. This topic has attracted attention from scholars across multiple disciplines.
+
+## Core Concepts
+
+The fundamental principles underlying ${topicTitle} have been refined through rigorous academic review. Key areas of focus include historical development, contemporary applications, and future implications.
+
+## Expert Analysis
+
+Expert contributors have identified several important dimensions of ${topicTitle} that merit careful consideration. These perspectives draw on peer-reviewed research and professional expertise.
+
+## Practical Applications
+
+The practical significance of ${topicTitle} extends to various fields, offering insights that inform both academic inquiry and real-world applications.`;
+  } else if (sourceSlug === 'newworld') {
+    return `# ${topicTitle}
+
+${topicTitle} encompasses a range of knowledge and perspectives that contribute to a comprehensive understanding of this important subject.
+
+## Introduction
+
+This topic represents an area of study that connects multiple disciplines and areas of human inquiry. Understanding ${topicTitle} provides valuable context for broader questions of knowledge and meaning.
+
+## Background
+
+The historical and conceptual background of ${topicTitle} provides essential context for understanding its current significance. Scholars have traced its development through various periods and cultural contexts.
+
+## Key Themes
+
+Important themes within the study of ${topicTitle} include:
+
+- Foundational concepts and their evolution
+- Contemporary interpretations and applications
+- Connections to broader areas of knowledge
+
+## Significance
+
+${topicTitle} continues to be relevant to ongoing discussions in education, research, and society. Its study offers perspectives that enrich our understanding of both specialized and general knowledge.`;
   }
   
   // Generic fallback

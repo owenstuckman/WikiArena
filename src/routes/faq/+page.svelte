@@ -105,19 +105,19 @@ We use this in the Knowledge Blender. When you combine multiple sources, Shapley
     },
     {
       question: "How do you calculate the quality scores?",
-      answer: `We analyze content across five dimensions:
+      answer: `We analyze content across five dimensions. All sources start with the same base scores — the differences come from what's actually in the content:
 
-<strong>Accuracy (30%)</strong> — We can't fact-check everything, so we use source reputation as a proxy (Britannica gets a higher base score than AI-generated content) plus whether there are citations.
+<strong>Accuracy (30%)</strong> — Starts at 70% for all sources. Gets bonuses for: having citations (+15% max), having good structure with headings (+10% max). Well-sourced, organized content scores higher.
 
-<strong>Depth (25%)</strong> — How long is it? Is it well-structured with sections and paragraphs?
+<strong>Depth (25%)</strong> — Based on word count (up to 2000 words = 100%) and structure (headings + paragraphs). Longer, well-organized articles score higher.
 
-<strong>Readability (20%)</strong> — Are sentences a reasonable length? Super long sentences hurt this score.
+<strong>Readability (20%)</strong> — Measures sentence length. Optimal is 15-20 words per sentence. Very long or very short sentences reduce the score.
 
-<strong>Objectivity (15%)</strong> — Does it avoid opinion words like "best", "terrible", "obviously"?
+<strong>Objectivity (15%)</strong> — Counts opinion words like "best", "terrible", "obviously", "absolutely". More opinion words = lower score.
 
-<strong>Citations (10%)</strong> — Are there references and links?
+<strong>Citations (10%)</strong> — Counts links relative to content length. Expects roughly 1 link per 200 words for well-cited content.
 
-These are rough heuristics, not perfect science. That's why user voting matters more for the final rankings.`
+These are heuristics, not perfect science. The real rankings come from user voting.`
     },
     {
       question: "What's the 'Expected Value' number?",
@@ -146,15 +146,19 @@ So we use AI for analysis (calculating metrics) but humans for the actual judgme
   const generalFAQ: FAQItem[] = [
     {
       question: "What sources are you comparing?",
-      answer: `Right now we have three:
+      answer: `We currently have five sources:
 
 <strong>Wikipedia</strong> — The community-edited encyclopedia. Massive coverage but quality varies by topic. Generally well-cited.
 
-<strong>Encyclopedia Britannica</strong> — Expert-written, professionally edited. Smaller but consistently high quality.
+<strong>Encyclopedia Britannica</strong> — Expert-written, professionally edited. Smaller coverage, consistently high quality.
 
 <strong>Grokipedia</strong> — AI-generated content from xAI. Potentially more up-to-date but can include AI errors.
 
-We're looking at adding more based on what people want to compare.`
+<strong>Citizendium</strong> — Expert-guided encyclopedia founded by a Wikipedia co-founder. Emphasizes expert review and accuracy.
+
+<strong>New World Encyclopedia</strong> — Encyclopedia with editorial oversight focusing on encyclopedic content with contextual perspectives.
+
+We're always looking at adding more based on what people want to compare.`
     },
     {
       question: "What do you do with my data?",
@@ -163,12 +167,6 @@ We're looking at adding more based on what people want to compare.`
 <strong>Your email (if you sign up):</strong> Just for logging in. We don't sell it or share it.
 
 <strong>If you don't sign up:</strong> We use an anonymous session ID so you can still see your voting history. No personal info needed.`
-    },
-    {
-      question: "Why do links not work during comparison?",
-      answer: `To keep it blind. If you could click a link and see it goes to "en.wikipedia.org", you'd immediately know which source you're looking at.
-
-Once you vote, the sources are revealed and all links become clickable. You can then explore the full articles.`
     }
   ];
 </script>
@@ -286,8 +284,8 @@ Once you vote, the sources are revealed and all links become clickable. You can 
         </div>
         
         <div class="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20">
-          <div class="font-semibold mb-1 text-amber-400">Disabled Links</div>
-          <p class="text-sm text-slate-400">Links are blocked during voting so URLs can't reveal sources.</p>
+          <div class="font-semibold mb-1 text-amber-400">Equal Starting Point</div>
+          <p class="text-sm text-slate-400">All sources start with the same base quality scores.</p>
         </div>
       </div>
       

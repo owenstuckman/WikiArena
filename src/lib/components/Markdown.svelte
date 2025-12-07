@@ -42,34 +42,118 @@
   
   // Pre-process content to fix common markdown table issues
   function preprocessMarkdown(text: string): string {
-    // Ensure there's a blank line before tables (required by some parsers)
-    let processed = text;
-    
-    // Find table headers (lines with |) and ensure blank line before
-    processed = processed.replace(/([^\n])\n(\|[^\n]+\|)\n(\|[-:| ]+\|)/g, '$1\n\n$2\n$3');
-    
-    // Fix tables that have no proper header separator
-    // Look for lines with | that are followed by content but no separator
-    const lines = processed.split('\n');
+    const lines = text.split('\n');
     const result: string[] = [];
+    let inTable = false;
+    let tableRowCount = 0;
+    let hasSeparator = false;
+    let firstRowCellCount = 0;
     
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const nextLine = lines[i + 1];
+      let line = lines[i];
       
-      result.push(line);
+      // Check if this line looks like a table row (contains | but not in code block)
+      const isTableLine = line.includes('|') && !line.trim().startsWith('```') && !line.trim().startsWith('`|');
       
-      // If this line looks like a table header (has |) and next line doesn't have separator
-      if (line.includes('|') && nextLine && nextLine.includes('|') && !nextLine.match(/^\|?[\s-:|]+\|?$/)) {
-        // Check if this might be a header row without separator
-        const cellCount = (line.match(/\|/g) || []).length;
-        if (cellCount >= 2 && !lines[i + 1]?.match(/^[\s]*\|[\s-:|]+/)) {
-          // This looks like it might need a separator - but only add if next line doesn't look like one
+      // Check if this line is a separator row (contains only |, -, :, and spaces)
+      const isSeparatorLine = isTableLine && /^[\s|:-]+$/.test(line.trim()) && line.includes('-');
+      
+      if (isTableLine) {
+        // Normalize the line
+        line = normalizeTableLine(line);
+        
+        if (!inTable) {
+          // Starting a new table
+          inTable = true;
+          tableRowCount = 0;
+          hasSeparator = false;
+          firstRowCellCount = countCells(line);
+          
+          // Ensure blank line before table
+          if (result.length > 0 && result[result.length - 1].trim() !== '') {
+            result.push('');
+          }
         }
+        
+        if (isSeparatorLine) {
+          hasSeparator = true;
+          // Normalize separator to match cell count
+          line = '|' + ' --- |'.repeat(firstRowCellCount);
+        }
+        
+        result.push(line);
+        tableRowCount++;
+        
+        // After first row, check if next line needs a separator
+        if (tableRowCount === 1) {
+          const nextLine = lines[i + 1];
+          const nextIsTable = nextLine && nextLine.includes('|') && !nextLine.trim().startsWith('```');
+          const nextIsSeparator = nextIsTable && /^[\s|:-]+$/.test(nextLine.trim()) && nextLine.includes('-');
+          
+          // If next line is table content but NOT a separator, insert one
+          if (nextIsTable && !nextIsSeparator) {
+            const separator = '|' + ' --- |'.repeat(firstRowCellCount);
+            result.push(separator);
+            hasSeparator = true;
+          }
+        }
+      } else {
+        if (inTable) {
+          // Ending a table
+          // If we never got a separator and only have one row, it's not a valid table
+          // But if we have multiple rows without separator, we already added one
+          inTable = false;
+          tableRowCount = 0;
+          
+          // Add blank line after table if next content isn't blank
+          if (line.trim() !== '') {
+            result.push('');
+          }
+        }
+        result.push(line);
       }
     }
     
-    return processed;
+    return result.join('\n');
+  }
+  
+  // Count cells in a table line
+  function countCells(line: string): number {
+    // Count pipes and subtract 1 (for the outer pipes)
+    const pipes = (line.match(/\|/g) || []).length;
+    return Math.max(1, pipes - 1);
+  }
+  
+  // Normalize a table line to proper markdown format
+  function normalizeTableLine(line: string): string {
+    let normalized = line.trim();
+    
+    // Replace multiple consecutive pipes with single pipe + empty cells
+    // ||  -> | |
+    // ||| -> | | |
+    normalized = normalized.replace(/\|\|+/g, (match) => {
+      const extraPipes = match.length - 1;
+      return '|' + ' |'.repeat(extraPipes);
+    });
+    
+    // Ensure line starts with |
+    if (!normalized.startsWith('|')) {
+      normalized = '| ' + normalized;
+    }
+    
+    // Ensure line ends with |
+    if (!normalized.endsWith('|')) {
+      normalized = normalized + ' |';
+    }
+    
+    // Clean up spacing: ensure space after each | (except trailing)
+    normalized = normalized.replace(/\|([^\s|])/g, '| $1');
+    normalized = normalized.replace(/([^\s|])\|/g, '$1 |');
+    
+    // Handle empty cells properly
+    normalized = normalized.replace(/\|\s*\|/g, '| |');
+    
+    return normalized;
   }
   
   $: {

@@ -89,29 +89,12 @@ With mu1=1600, mu2=1400, the math works out to approximately 0.75-0.76 probabili
 - `getRandomTopic()` function selects random topics from Wikipedia
 - `getRandomCuratedTopic()` selects from curated list randomly
 
-### 11. "Links are disabled during comparison, enabled after"
-**Status:** ✅ TRUE  
-**Code Reference:** `src/routes/arena/+page.svelte`
-- Lines 540-545: `disableLinks={true}` during comparison
-- After voting (reveal phase), `disableLinks={false}` in expandable section
-
-### 12. "Links show toast message when clicked during comparison"
-**Status:** ✅ TRUE  
-**Code Reference:** `src/routes/arena/+page.svelte` lines 797-815
-```svelte
-{#if showLinkToast}
-  <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-fade-in-up">
-    ...
-    <div class="text-sm font-medium text-white">Links disabled during comparison</div>
-    <div class="text-xs text-slate-400">Vote first to reveal sources and enable links</div>
-```
-
-### 13. "You can search for specific topics"
+### 11. "You can search for specific topics"
 **Status:** ✅ TRUE  
 **Code Reference:** `src/routes/arena/+page.svelte` lines 97-123  
 `handleSearch()` function calls Wikipedia API to search topics
 
-### 14. "We track category ratings (Accuracy, Readability, Depth, Objectivity)"
+### 12. "We track category ratings (Accuracy, Readability, Depth, Objectivity)"
 **Status:** ✅ TRUE  
 **Code Reference:** `src/lib/types/database.ts` lines 3-6
 ```typescript
@@ -119,11 +102,19 @@ export type RatingCategory = 'overall' | 'accuracy' | 'readability' | 'comprehen
 ```
 Also in `src/routes/leaderboard/+page.svelte` with category tabs.
 
+### 13. "All sources start with the same base quality scores"
+**Status:** ✅ TRUE  
+**Code Reference:** `src/lib/services/shapley.ts` line 86
+```typescript
+const baseAccuracy = 0.7;
+```
+All sources use the same base accuracy of 0.7 (70%).
+
 ---
 
 ## Quality Metrics Section
 
-### 15. "Accuracy weight is 30%"
+### 14. "Accuracy weight is 30%"
 **Status:** ✅ TRUE  
 **Code Reference:** `src/lib/services/shapley.ts` lines 35-41
 ```typescript
@@ -136,59 +127,54 @@ const METRIC_WEIGHTS = {
 };
 ```
 
-### 16. "Depth weight is 25%"
+### 15. "Depth weight is 25%"
 **Status:** ✅ TRUE  
 **Code Reference:** Same as above, `depth: 0.25`
 
-### 17. "Readability weight is 20%"
+### 16. "Readability weight is 20%"
 **Status:** ✅ TRUE  
 **Code Reference:** Same as above, `readability: 0.20`
 
-### 18. "Objectivity weight is 15%"
+### 17. "Objectivity weight is 15%"
 **Status:** ✅ TRUE  
 **Code Reference:** Same as above, `objectivity: 0.15`
 
-### 19. "Citations weight is 10%"
+### 18. "Citations weight is 10%"
 **Status:** ✅ TRUE  
 **Code Reference:** Same as above, `citations: 0.10`
 
-### 20. "Britannica gets higher base accuracy than AI content"
+### 19. "Accuracy starts at 70% for all sources, with bonuses for citations and structure"
 **Status:** ✅ TRUE  
-**Code Reference:** `src/lib/services/shapley.ts` lines 84-91
+**Code Reference:** `src/lib/services/shapley.ts` lines 86-91
 ```typescript
-let baseAccuracy = 0.7;
-if (sourceName.toLowerCase().includes('britannica')) {
-  baseAccuracy = 0.85;
-} else if (sourceName.toLowerCase().includes('wikipedia')) {
-  baseAccuracy = 0.80;
-} else if (sourceName.toLowerCase().includes('grok')) {
-  baseAccuracy = 0.75;
-}
+const baseAccuracy = 0.7;
+const citationBonus = citations * 0.15; // Up to +0.15 for citations
+const structureBonus = Math.min(0.1, (headingCount / 10) * 0.1); // Up to +0.1 for structure
+const accuracy = baseAccuracy + citationBonus + structureBonus;
 ```
 
-### 21. "Readability penalizes long sentences"
+### 20. "Readability measures sentence length (optimal 15-20 words)"
 **Status:** ✅ TRUE  
-**Code Reference:** `src/lib/services/shapley.ts` lines 68-72
+**Code Reference:** `src/lib/services/shapley.ts` lines 71-73
 ```typescript
-const avgWordsPerSentence = sentenceCount > 0 ? wordCount / sentenceCount : 20;
-const readability = Math.max(0, Math.min(1, 1 - (avgWordsPerSentence - 15) / 30));
+const readability = Math.max(0, Math.min(1, 1 - Math.abs(avgWordsPerSentence - 17.5) / 25));
 ```
 
-### 22. "Objectivity detects opinion words like 'best', 'terrible', 'obviously'"
+### 21. "Objectivity detects opinion words like 'best', 'terrible', 'obviously', 'absolutely'"
 **Status:** ✅ TRUE  
-**Code Reference:** `src/lib/services/shapley.ts` lines 94-96
+**Code Reference:** `src/lib/services/shapley.ts` lines 94-95
 ```typescript
-const opinionWords = (content.match(/\b(best|worst|amazing|terrible|obviously|clearly|everyone knows)\b/gi) || []).length;
+const opinionWords = (content.match(/\b(best|worst|amazing|terrible|obviously|clearly|everyone knows|undoubtedly|certainly|definitely|absolutely)\b/gi) || []).length;
 ```
 
-### 23. "Shapley values measure each source's marginal contribution"
+### 22. "Shapley values measure each source's marginal contribution"
 **Status:** ✅ TRUE  
-**Code Reference:** `src/lib/services/shapley.ts` lines 163-210  
+**Code Reference:** `src/lib/services/shapley.ts` lines 168-215  
 `calculateShapleyValues()` function implements the Shapley formula with coalitions.
 
-### 24. "Expected Value = 40% quality + 35% rating + 25% win rate"
+### 23. "Expected Value = 40% quality + 35% rating + 25% win rate"
 **Status:** ✅ TRUE  
-**Code Reference:** `src/lib/services/shapley.ts` lines 219-232
+**Code Reference:** `src/lib/services/shapley.ts` lines 224-237
 ```typescript
 const expectedValue = (
   q.overallScore * 0.4 +      // Local quality assessment
@@ -201,24 +187,34 @@ const expectedValue = (
 
 ## General Section
 
-### 25. "Wikipedia: Community-edited encyclopedia"
+### 24. "Wikipedia: Community-edited encyclopedia"
 **Status:** ✅ TRUE  
 **External Fact:** Wikipedia is a community-edited encyclopedia.
 
-### 26. "Encyclopedia Britannica: Expert-written, professionally edited"
+### 25. "Encyclopedia Britannica: Expert-written, professionally edited"
 **Status:** ✅ TRUE  
 **External Fact:** Britannica uses expert authors and editorial review.
 
-### 27. "Grokipedia: AI-generated content from xAI"
+### 26. "Grokipedia: AI-generated content from xAI"
 **Status:** ✅ TRUE  
 **Code Reference:** `src/lib/services/content.ts` references xAI/Grok for content generation.
 
-### 28. "Votes are anonymous - we never show who voted for what"
+### 27. "Citizendium: Expert-guided encyclopedia"
+**Status:** ✅ TRUE  
+**External Fact:** Citizendium was founded by Wikipedia co-founder Larry Sanger with expert-guided editing.
+**Code Reference:** `src/lib/services/content.ts` - `fetchCitizendiumContent()` function
+
+### 28. "New World Encyclopedia: Encyclopedia with editorial oversight"
+**Status:** ✅ TRUE  
+**External Fact:** New World Encyclopedia has editorial oversight and review processes.
+**Code Reference:** `src/lib/services/content.ts` - `fetchNewWorldContent()` function
+
+### 29. "Votes are anonymous - we never show who voted for what"
 **Status:** ✅ TRUE  
 **Code Reference:** `src/routes/history/+page.svelte` only shows the current user's own votes.  
 Leaderboard shows aggregate data, never individual votes.
 
-### 29. "Anonymous session ID for non-signed-up users"
+### 30. "Anonymous session ID for non-signed-up users"
 **Status:** ✅ TRUE  
 **Code Reference:** `src/lib/supabaseClient.ts` lines 28-44
 ```typescript
@@ -240,9 +236,9 @@ export function getSessionId(): string {
 | Section | Claims | Verified | Status |
 |---------|--------|----------|--------|
 | Rating System | 8 | 8 | ✅ All verified |
-| Fairness | 6 | 6 | ✅ All verified |
+| Fairness | 5 | 5 | ✅ All verified |
 | Quality Metrics | 10 | 10 | ✅ All verified |
-| General | 5 | 5 | ✅ All verified |
-| **Total** | **29** | **29** | ✅ **100% verified** |
+| General | 7 | 7 | ✅ All verified |
+| **Total** | **30** | **30** | ✅ **100% verified** |
 
 All FAQ claims are accurate and implemented in the codebase.

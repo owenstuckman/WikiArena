@@ -56,6 +56,7 @@ export function calculateOverallScore(metrics: QualityMetrics): number {
 /**
  * Estimate quality metrics from content analysis
  * This is a heuristic-based approach - in production you'd use ML models
+ * All sources start with the same base scores - differentiation comes from content analysis
  */
 export function estimateQualityMetrics(content: string, sourceName: string): QualityMetrics {
   const wordCount = content.split(/\s+/).length;
@@ -63,38 +64,36 @@ export function estimateQualityMetrics(content: string, sourceName: string): Qua
   const paragraphCount = (content.match(/\n\n/g) || []).length + 1;
   const headingCount = (content.match(/^##?\s/gm) || []).length;
   const linkCount = (content.match(/\[.+?\]\(.+?\)/g) || []).length;
-  const listCount = (content.match(/^[-*]\s/gm) || []).length;
   
-  // Average words per sentence (lower is more readable)
+  // Average words per sentence (lower is more readable, optimal around 15-20)
   const avgWordsPerSentence = sentenceCount > 0 ? wordCount / sentenceCount : 20;
   
-  // Readability: penalize very long sentences
-  const readability = Math.max(0, Math.min(1, 1 - (avgWordsPerSentence - 15) / 30));
+  // Readability: optimal sentences are 15-20 words, penalize very long or very short
+  // Score drops as sentences deviate from optimal range
+  const readability = Math.max(0, Math.min(1, 1 - Math.abs(avgWordsPerSentence - 17.5) / 25));
   
   // Depth: based on content length and structure
+  // More words = more depth (up to 2000), plus bonus for good structure
   const depthFromLength = Math.min(1, wordCount / 2000);
   const depthFromStructure = Math.min(1, (headingCount + paragraphCount) / 15);
   const depth = (depthFromLength * 0.6 + depthFromStructure * 0.4);
   
-  // Citations: based on link count relative to content
+  // Citations: based on link count relative to content length
+  // Expect roughly 1 link per 200 words for well-cited content
   const expectedLinks = wordCount / 200;
   const citations = Math.min(1, linkCount / Math.max(expectedLinks, 1));
   
-  // Accuracy: harder to estimate - use source reputation as proxy
-  // Wikipedia has editorial review, Britannica has expert authors, Grokipedia is AI
-  let baseAccuracy = 0.7;
-  if (sourceName.toLowerCase().includes('britannica')) {
-    baseAccuracy = 0.85;
-  } else if (sourceName.toLowerCase().includes('wikipedia')) {
-    baseAccuracy = 0.80;
-  } else if (sourceName.toLowerCase().includes('grok')) {
-    baseAccuracy = 0.75;
-  }
-  // Adjust based on citation presence
-  const accuracy = baseAccuracy + (citations * 0.1);
+  // Accuracy: ALL sources start at same base (0.7)
+  // Bonus for having citations (well-sourced content is more likely accurate)
+  // Bonus for good structure (organized content tends to be more careful)
+  const baseAccuracy = 0.7;
+  const citationBonus = citations * 0.15; // Up to +0.15 for citations
+  const structureBonus = Math.min(0.1, (headingCount / 10) * 0.1); // Up to +0.1 for structure
+  const accuracy = baseAccuracy + citationBonus + structureBonus;
   
   // Objectivity: look for neutral language (penalize superlatives, opinions)
-  const opinionWords = (content.match(/\b(best|worst|amazing|terrible|obviously|clearly|everyone knows)\b/gi) || []).length;
+  // Count opinion words relative to content length
+  const opinionWords = (content.match(/\b(best|worst|amazing|terrible|obviously|clearly|everyone knows|undoubtedly|certainly|definitely|absolutely)\b/gi) || []).length;
   const objectivity = Math.max(0.5, 1 - (opinionWords / Math.max(sentenceCount, 1)) * 2);
   
   return {

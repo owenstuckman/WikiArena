@@ -24,8 +24,6 @@
   import type { Source, BlendConfig } from '$lib/types/database';
 
   // Constants
-  const XAI_API_URL = 'https://api.x.ai/v1/chat/completions';
-  
   const OUTPUT_STYLES = [
     { value: 'balanced', label: 'Balanced', desc: 'Mix of detail and brevity' },
     { value: 'concise', label: 'Concise', desc: 'Short and to the point' },
@@ -121,6 +119,8 @@
         { id: 'demo-wiki', name: 'Wikipedia', slug: 'wikipedia', description: 'The free encyclopedia', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
         { id: 'demo-grok', name: 'Grokipedia', slug: 'grokipedia', description: 'AI-powered knowledge', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
         { id: 'demo-brit', name: 'Encyclopedia Britannica', slug: 'britannica', description: 'Trusted since 1768', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
+        { id: 'demo-citizen', name: 'Citizendium', slug: 'citizendium', description: 'Expert-guided encyclopedia', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
+        { id: 'demo-newworld', name: 'New World Encyclopedia', slug: 'newworld', description: 'Values-based encyclopedia', rating: 1500, rating_deviation: 350, volatility: 0.06, total_matches: 0, total_wins: 0, total_losses: 0, total_ties: 0, is_active: true, api_endpoint: null, api_config: {}, logo_url: null, created_at: '', updated_at: '' },
       ];
     }
     
@@ -533,76 +533,40 @@ ${truncatedContent}`;
       })
       .join('\n\n---\n\n');
 
-    // Build style instruction
-    const styleInstructions: Record<string, string> = {
-      balanced: 'Provide a balanced mix of detail and brevity. Be informative but not overwhelming.',
-      concise: 'Be extremely concise. Get straight to the point with minimal elaboration.',
-      detailed: 'Provide comprehensive coverage with examples, context, and thorough explanations.',
-      academic: 'Use a scholarly, formal tone. Structure with clear sections and maintain objectivity.',
-      casual: 'Write in a friendly, conversational tone. Use simple language and relatable examples.',
-      eli5: 'Explain like I\'m 5 years old. Use very simple words, analogies, and short sentences.',
-    };
-
-    const stylePrompt = styleInstructions[outputStyle] || styleInstructions.balanced;
     const formatPrompt = customPrompt || selectedPreset;
 
-    // Build the full prompt
-    const systemPrompt = `You are a knowledge synthesizer that blends information from multiple encyclopedia sources into a unified, coherent response.
+    try {
+      // Call our server-side API endpoint
+      const response = await fetch('/api/blend', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sourceContexts,
+          query,
+          outputStyle,
+          formatPrompt,
+        }),
+      });
 
-CRITICAL RULES:
-1. Do NOT mention the source names in your response
-2. Do NOT say "according to Source A" or reference sources by name
-3. Synthesize the information naturally as if writing an original article
-4. When sources conflict, prefer information from higher-weighted sources
-5. Use markdown formatting (headings, lists, bold) appropriately
-6. Include tables if the source content contains tabular data
-
-OUTPUT STYLE: ${stylePrompt}
-${formatPrompt ? `FORMAT INSTRUCTIONS: ${formatPrompt}` : ''}
-
-Your response should be a well-structured article about the topic that combines the best information from all sources.`;
-
-    const userPrompt = `Topic: ${query}
-
-Here is the content from multiple knowledge sources. Please synthesize this into a single, unified article:
-
-${sourceContexts}
-
-Remember: Do NOT mention source names. Write as if this is original content.`;
-
-    // Try to use xAI API if available
-    const xaiApiKey = browser ? (window as any).__XAI_API_KEY__ : null;
-    
-    if (xaiApiKey) {
-      try {
-        const response = await fetch(XAI_API_URL, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${xaiApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'grok-2-latest',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.3,
-            max_tokens: 3000,
-          }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          return data.choices?.[0]?.message?.content || generateDemoBlend(sourceContents);
-        }
-      } catch (e) {
-        console.error('Grok API error:', e);
+      if (!response.ok) {
+        console.error('Blend API error:', response.status);
+        return generateDemoBlend(sourceContents);
       }
-    }
 
-    // Demo mode
-    return generateDemoBlend(sourceContents);
+      const data = await response.json();
+      
+      if (data.error && !data.content) {
+        console.error('Blend API error:', data.error);
+        return generateDemoBlend(sourceContents);
+      }
+      
+      return data.content || generateDemoBlend(sourceContents);
+    } catch (e) {
+      console.error('Blend error:', e);
+      return generateDemoBlend(sourceContents);
+    }
   }
 
   function generateDemoBlend(

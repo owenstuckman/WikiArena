@@ -1,7 +1,7 @@
 
 - [X] clean up the arena so it looks good when comparing the two 
 - [ ] get blending working 
-- [ ] blending shapely values
+- [X] blending shapely values
 - [ ] add more sources 
 - 
 

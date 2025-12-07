@@ -17,15 +17,22 @@ Each piece of content is analyzed across 5 dimensions:
 **What it measures:** How factually reliable the content is likely to be.
 
 **How it's calculated:**
-- Base score from source reputation:
-  - Encyclopedia Britannica: 85% base (expert-authored, editorial review)
-  - Wikipedia: 80% base (community-edited, citation requirements)
-  - Grokipedia: 75% base (AI-generated, may hallucinate)
-- Adjusted by citation presence (+10% max for well-cited content)
+- All sources start with the same base score: 70%
+- Bonus for citation presence: up to +15% for well-cited content
+- Bonus for structure: up to +10% for content with good heading organization
+- Maximum possible: 95%
+
+**Formula:**
+```
+baseAccuracy = 0.70
+citationBonus = citations × 0.15    // 0 to 0.15
+structureBonus = min(0.1, headings/10 × 0.1)  // 0 to 0.10
+accuracy = baseAccuracy + citationBonus + structureBonus
+```
 
 **Why this weight:** Accuracy is the most critical factor for knowledge sources. Misinformation is worse than poor formatting.
 
-**Limitations:** True accuracy requires fact-checking against authoritative sources. Our heuristic uses source reputation as a proxy.
+**Why same base for all sources:** All sources are evaluated purely on content characteristics, not brand reputation. This ensures fairness — let the content speak for itself.
 
 ---
 
@@ -55,19 +62,20 @@ depth = (lengthScore × 0.6) + (structureScore × 0.4)
 
 **How it's calculated:**
 - Based on average words per sentence
-- Optimal range: ~15 words/sentence
-- Penalty for very long sentences (30+ words)
+- Optimal range: 15-20 words/sentence
+- Penalty for deviating from optimal (both too long AND too short)
 
 **Formula:**
 ```
-readability = max(0, 1 - (avgWordsPerSentence - 15) / 30)
+deviation = abs(avgWordsPerSentence - 17.5)
+readability = max(0, 1 - deviation / 25)
 ```
 
 **Score interpretation:**
-- 15 words/sentence → 100%
-- 25 words/sentence → 67%
-- 35 words/sentence → 33%
-- 45+ words/sentence → 0%
+- 15-20 words/sentence → 90-100%
+- 10 or 25 words/sentence → ~70%
+- 5 or 30 words/sentence → ~50%
+- <5 or >35 words/sentence → below 30%
 
 **Why this weight:** Readable content serves more users, but shouldn't outweigh accuracy.
 
@@ -320,10 +328,11 @@ This composite is for display only—actual rankings use the independent Glicko-
 
 ### Current Limitations
 
-1. **Accuracy is estimated, not verified** - We use source reputation as a proxy
+1. **Accuracy is estimated from content signals** - We use citations and structure as proxies, not actual fact-checking
 2. **No semantic analysis** - We count words, not meaning
 3. **English-centric** - Readability formulas tuned for English
 4. **Can't detect subtle issues** - Framing, omission, outdated info
+5. **Link count ≠ link quality** - We count citations but don't verify them
 
 ### Planned Improvements
 
@@ -331,6 +340,7 @@ This composite is for display only—actual rankings use the independent Glicko-
 2. **Semantic similarity** - Detect redundancy between sources
 3. **Freshness scoring** - Penalize outdated information
 4. **Domain-specific models** - Different criteria for science vs. history vs. pop culture
+5. **Citation quality analysis** - Verify links point to authoritative sources
 
 ---
 

@@ -1,10 +1,10 @@
-# 📚 Knowledge Arena
+# WikiArena
 
 > Compare knowledge sources head-to-head. Vote for your preferred information style. Shape the global leaderboard.
 
-Knowledge Arena is a crowdsourced evaluation platform that allows users to compare and rate knowledge sources (Wikipedia, Grokipedia, Encyclopedia Britannica, and others) through blind side-by-side comparisons using the **Glicko-2 rating system**.
+WikiArena is a crowdsourced evaluation platform that allows users to compare and rate knowledge sources (Wikipedia, Grokipedia, Encyclopedia Britannica, Citizendium, and New World Encyclopedia) through blind side-by-side comparisons using the **Glicko-2 rating system**.
 
-![Knowledge Arena](https://img.shields.io/badge/Stack-Svelte%20%2B%20Supabase-orange?style=for-the-badge)
+![WikiArena](https://img.shields.io/badge/Stack-Svelte%20%2B%20Supabase-orange?style=for-the-badge)
 ![Deploy](https://img.shields.io/badge/Deploy-Vercel-black?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
 
@@ -13,10 +13,20 @@ Knowledge Arena is a crowdsourced evaluation platform that allows users to compa
 - **⚔️ Arena Comparisons** - Compare two knowledge sources side-by-side on the same topic
 - **🏆 Global Leaderboard** - Real-time rankings using Glicko-2 rating system
 - **📊 Vote History** - Track your voting patterns and source preferences
-- **🧪 Knowledge Blender** - Combine sources based on your preferences (powered by Grok)
+- **🧪 Knowledge Blender** - Combine sources with AI synthesis (powered by xAI Grok)
 - **🔐 Authentication** - Sign in to save your voting history across devices
 - **📱 Responsive Design** - Works on desktop and mobile
-- **✨ Markdown Rendering** - Beautiful formatting of encyclopedia content
+- **✨ Markdown Rendering** - Beautiful formatting with tables and links
+
+## 📚 Knowledge Sources
+
+| Source | Description | API/Method |
+|--------|-------------|------------|
+| **Wikipedia** | Community-edited encyclopedia | MediaWiki API |
+| **Grokipedia** | AI-powered encyclopedia | Scraped from grokipedia.com |
+| **Encyclopedia Britannica** | Expert-written since 1768 | Demo content |
+| **Citizendium** | Expert-guided encyclopedia | MediaWiki API |
+| **New World Encyclopedia** | Editorial oversight encyclopedia | MediaWiki API |
 
 ## 🛠️ Tech Stack
 
@@ -24,7 +34,7 @@ Knowledge Arena is a crowdsourced evaluation platform that allows users to compa
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/)
 - **Backend**: [Supabase](https://supabase.com/) (PostgreSQL, Auth, Edge Functions, Realtime)
 - **Rating System**: [Glicko-2](http://www.glicko.net/glicko/glicko2.pdf)
-- **AI Integration**: [xAI Grok API](https://docs.x.ai/)
+- **AI Synthesis**: [xAI Grok API](https://docs.x.ai/) (for Knowledge Blender)
 - **Deployment**: [Vercel](https://vercel.com/)
 - **Markdown**: [Marked](https://marked.js.org/)
 
@@ -36,13 +46,14 @@ Knowledge Arena is a crowdsourced evaluation platform that allows users to compa
 - npm or pnpm
 - Supabase CLI (optional, for local development)
 - Supabase account
+- xAI API key (required for Knowledge Blender)
 
 ### Installation
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/knowledge-arena.git
-   cd knowledge-arena
+   git clone https://github.com/yourusername/wikiarena.git
+   cd wikiarena
    ```
 
 2. **Install dependencies**
@@ -67,11 +78,11 @@ Knowledge Arena is a crowdsourced evaluation platform that allows users to compa
    cp .env.example .env
    ```
    
-   Fill in your Supabase credentials:
+   Fill in your credentials:
    ```env
    PUBLIC_SUPABASE_URL=https://your-project.supabase.co
    PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-   XAI_API_KEY=your-xai-api-key  # Optional, for Grokipedia
+   XAI_API_KEY=your-xai-api-key  # Required for Knowledge Blender
    ```
 
 5. **Start the development server**
@@ -86,7 +97,7 @@ Knowledge Arena is a crowdsourced evaluation platform that allows users to compa
 
 ### One-Click Deploy
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/knowledge-arena)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/wikiarena)
 
 ### Manual Deploy
 
@@ -95,7 +106,7 @@ Knowledge Arena is a crowdsourced evaluation platform that allows users to compa
    git init
    git add .
    git commit -m "Initial commit"
-   git remote add origin https://github.com/yourusername/knowledge-arena.git
+   git remote add origin https://github.com/yourusername/wikiarena.git
    git push -u origin main
    ```
 
@@ -108,7 +119,7 @@ Knowledge Arena is a crowdsourced evaluation platform that allows users to compa
    In Vercel dashboard, add:
    - `PUBLIC_SUPABASE_URL`
    - `PUBLIC_SUPABASE_ANON_KEY`
-   - `XAI_API_KEY` (optional)
+   - `XAI_API_KEY` (required for Knowledge Blender)
 
 4. **Deploy**
    Click "Deploy" and Vercel will build and deploy your app!
@@ -129,7 +140,7 @@ vercel --prod
 ## 📁 Project Structure
 
 ```
-knowledge-arena/
+wikiarena/
 ├── docs/                     # Documentation
 │   ├── PRD.md               # Product Requirements
 │   ├── ARCHITECTURE.md      # Technical Architecture
@@ -143,12 +154,13 @@ knowledge-arena/
 │   ├── routes/              # SvelteKit routes
 │   │   ├── arena/           # Arena comparison page
 │   │   ├── leaderboard/     # Rankings page
-│   │   └── blend/           # Knowledge blender page
+│   │   ├── blend/           # Knowledge blender page
+│   │   ├── history/         # Vote history page
+│   │   ├── faq/             # FAQ/How it works page
+│   │   └── api/             # API endpoints
 │   ├── app.css              # Global styles
 │   └── app.html             # HTML template
-├── supabase/
-│   ├── migrations/          # Database migrations
-│   └── functions/           # Edge Functions
+├── sql/                     # SQL scripts
 ├── package.json
 └── README.md
 ```
@@ -162,6 +174,13 @@ knowledge-arena/
 4. User reads both explanations and votes for their preference
 5. Sources are revealed with Glicko-2 rating changes
 6. User can continue to next match or view leaderboard
+
+### Knowledge Blender
+1. Select which sources to include and set weights
+2. Enter a topic or search query
+3. Content is fetched from all enabled sources
+4. xAI Grok synthesizes the content into a unified article
+5. View quality metrics and Shapley value analysis
 
 ### Glicko-2 Rating System
 - **Rating (μ)**: Skill estimate, starting at 1500
@@ -186,15 +205,19 @@ blend_configs    -- User's blend configurations
 rating_history   -- Historical rating data for charts
 ```
 
-See `supabase/migrations/001_initial_schema.sql` for full schema.
-
 ## 🔌 API Integration
 
 ### Wikipedia
-Uses the [MediaWiki REST API](https://www.mediawiki.org/wiki/API:REST_API) to fetch article summaries.
+Uses the [MediaWiki REST API](https://www.mediawiki.org/wiki/API:REST_API) and Parse API to fetch full article content.
 
-### Grokipedia (xAI)
-Requires an [xAI API key](https://console.x.ai/). Generates real-time, AI-powered explanations using Grok.
+### Grokipedia
+Scrapes content directly from [grokipedia.com](https://grokipedia.com/page/{topic}).
+
+### Citizendium & New World Encyclopedia
+Uses MediaWiki API (TextExtracts) to fetch article content.
+
+### xAI Grok (Knowledge Blender)
+Requires an [xAI API key](https://console.x.ai/). Used server-side to synthesize content from multiple sources into a unified article.
 
 ## 📝 Available Scripts
 
@@ -205,9 +228,6 @@ npm run preview      # Preview production build
 npm run check        # Type-check the codebase
 npm run lint         # Lint the codebase
 npm run format       # Format with Prettier
-npm run db:push      # Push database migrations
-npm run db:reset     # Reset database
-npm run db:types     # Generate TypeScript types from schema
 ```
 
 ## 🤝 Contributing
@@ -233,5 +253,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 <p align="center">
-  <strong>Knowledge Arena</strong> — Where knowledge sources compete for truth.
+  <strong>WikiArena</strong> — Where knowledge sources compete for truth.
 </p>

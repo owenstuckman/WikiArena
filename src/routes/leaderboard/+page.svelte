@@ -30,6 +30,20 @@
       comprehensiveness: { rating: 1480, wins: 46, total: 100 },
       objectivity: { rating: 1540, wins: 58, total: 100 },
     },
+    'citizendium': {
+      overall: { rating: 1500, wins: 0, total: 0 },
+      accuracy: { rating: 1530, wins: 56, total: 100 },
+      readability: { rating: 1460, wins: 44, total: 100 },
+      comprehensiveness: { rating: 1470, wins: 45, total: 100 },
+      objectivity: { rating: 1520, wins: 54, total: 100 },
+    },
+    'newworld': {
+      overall: { rating: 1500, wins: 0, total: 0 },
+      accuracy: { rating: 1490, wins: 49, total: 100 },
+      readability: { rating: 1510, wins: 53, total: 100 },
+      comprehensiveness: { rating: 1460, wins: 43, total: 100 },
+      objectivity: { rating: 1500, wins: 50, total: 100 },
+    },
   };
 
   onMount(async () => {

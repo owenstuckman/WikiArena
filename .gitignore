@@ -13,11 +13,6 @@ package-lock.json
 /.vercel
 /.netlify
 
-# Supabase
-/supabase/.temp
-/supabase/functions/.netlify
-/supabase/functions/.vercel
-
 # Environment variables
 .env
 .env.*

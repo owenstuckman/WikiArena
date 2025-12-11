@@ -158,6 +158,64 @@
     }
   }
 
+  /**
+   * Validate that content is not blank or an error page
+   */
+  function isValidContent(content: SourceContent | null): boolean {
+    if (!content || !content.content) {
+      return false;
+    }
+
+    const text = content.content.trim();
+    
+    // Check if content is blank or too short
+    if (text.length < 100) {
+      return false;
+    }
+
+    // Check if content is mostly whitespace
+    const nonWhitespaceLength = text.replace(/\s+/g, '').length;
+    if (nonWhitespaceLength < 50) {
+      return false;
+    }
+
+    // Check for common error indicators (case-insensitive)
+    const errorPatterns = [
+      /^error\s*:/i,
+      /^not\s+found/i,
+      /^page\s+not\s+found/i,
+      /^404/i,
+      /^no\s+results/i,
+      /^no\s+content/i,
+      /^article\s+not\s+found/i,
+      /^entry\s+not\s+found/i,
+      /^this\s+page\s+does\s+not\s+exist/i,
+      /^the\s+requested\s+page\s+could\s+not\s+be\s+found/i,
+      /^sorry,\s+we\s+couldn['']t\s+find/i,
+      /^unable\s+to\s+retrieve/i,
+      /^failed\s+to\s+load/i,
+      /^an\s+error\s+occurred/i,
+      /^something\s+went\s+wrong/i,
+    ];
+
+    // Check first 200 characters for error messages
+    const preview = text.substring(0, 200).toLowerCase();
+    for (const pattern of errorPatterns) {
+      if (pattern.test(preview)) {
+        return false;
+      }
+    }
+
+    // Check if content is just a title with minimal text
+    // (e.g., "# Topic\n\n" with nothing else)
+    const lines = text.split('\n').filter(line => line.trim().length > 0);
+    if (lines.length <= 2 && text.length < 200) {
+      return false;
+    }
+
+    return true;
+  }
+
   async function loadComparison(topic: string) {
     phase = 'loading';
     error = null;
@@ -175,8 +233,10 @@
         
         try {
           const content = await fetchContentFromSource(topic, source.slug as SourceSlug);
-          if (content && content.content && content.content.length > 100) {
-            validSources.push({ source, content });
+          if (isValidContent(content)) {
+            validSources.push({ source, content: content! });
+          } else {
+            console.warn(`Skipping ${source.name}: content is blank or shows an error`);
           }
         } catch (e) {
           console.warn(`Failed to fetch from ${source.name}:`, e);
